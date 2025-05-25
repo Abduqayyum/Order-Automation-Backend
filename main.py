@@ -235,7 +235,7 @@ async def text_summarization(data: PromptRequest):
         except json.JSONDecodeError:
             orders_json = {"orders": {}}
 
-        print(orders_json)
+        # print(orders_json)
 
         orders = orders_json.get("orders", None)
 
@@ -298,7 +298,7 @@ async def delete_order(order_id: int, db: Session = Depends(get_db)):
 
 @app.get("/")
 async def main_page():
-    return JSONResponse(status_code=200, content={"status": "App is working"})
+    return JSONResponse(status_code=200, content={"status": "test app is working!"})
 
 
 if __name__ == "__main__":
