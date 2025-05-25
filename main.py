@@ -235,7 +235,7 @@ async def text_summarization(data: PromptRequest):
         except json.JSONDecodeError:
             orders_json = {"orders": {}}
 
-        print(orders_json)
+        # print(orders_json)
 
         orders = orders_json.get("orders", None)
 
