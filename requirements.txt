@@ -1,0 +1,10 @@
+google-genai
+filetype
+fastapi
+uvicorn
+python-dotenv
+pydantic
+python-multipart
+pydantic-settings
+sqlalchemy
+psycopg2-binary
