@@ -6,6 +6,7 @@ import filetype
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 import re
@@ -163,6 +164,14 @@ def summarize_order(prompt):
 
 
 app = FastAPI(title="Order Automation API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 allowed_file_types = ["audio/wav", "audio/mp3", "audio/aiff", "audio/aac", "audio/ogg", "audio/flac", "audio/x-wav", "audio/mpeg"]
 
