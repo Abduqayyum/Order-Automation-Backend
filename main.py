@@ -276,6 +276,94 @@ async def text_summarization(data: PromptRequest):
                 "error": str(e)
             }
         )
+    
+@app.post("/summarize_order_from_audio")
+async def process_audio_file(audio: UploadFile = File(None)):
+    try:
+        if audio is None:
+            return JSONResponse(status_code=400, content={"success": {}, "error": {"description": {"Please upload a file!"}}})
+        
+        contents = await audio.read()
+        kind = filetype.guess(contents)
+        print(kind.mime, "file type")
+        print("file name", audio.filename)
+
+        if kind is None or kind.mime not in allowed_file_types:
+            return JSONResponse(status_code=400, content={"success": {}, "error": {"description": f"Invalid file type. Only following audio files are accepted {allowed_file_types}."}})
+        
+        # prompt = f"Summarize the whole text and just return list of orders (quantity) that the customer ordered. Here is the text: {data}"
+        prompt = f"""
+                    Suhbatda mijoz va xodim o‘rtasidagi buyurtma jarayoni mavjud. Sizdan talab qilinadi:
+
+                    🟢 Faqat **mijozning yakuniy va tasdiqlangan buyurtmalarini** aniqlang (suhbat oxirida mijoz nima buyurtma bergan bo‘lsa, o‘shani).
+                    🔴 Mijoz suhbat davomida o‘zgartirgan yoki bekor qilgan buyurtmalarni hisobga olmang.
+
+                    📋 Natijani faqat quyidagi formatda qaytaring:
+                    
+                    {{
+                    "orders": {{
+                        "nomi": {{
+                        "miqdori": 2,
+                        "hajmi": S}}
+                    }}
+                    }}
+
+                    ❌ Agar suhbat buyurtma bilan bog‘liq bo‘lmasa yoki hech qanday yakuniy buyurtma bo‘lmasa, quyidagicha bo‘lsin:
+
+                    {{
+                    "orders": {{}}
+                    }}
+
+                    📌 Qoidalar:
+                    - bu mahsulotlar nomi natijani manashu listdagi nomga asoslanib qaytar {list(items_data.keys())}
+                    - mojito bu Biron mevali mohito yoki sirop qushilgan mohito
+                    - Faqat mijozning buyurtmasi kerak, xodimning takliflari emas.
+                    - Mijoz o‘zgartirgan yoki bekor qilgan narsalarni JSONga kiritmang.
+                    - Hajmini S, M, L qilib qaytar
+                    - Suhbat aralash tillarda bo‘lishi mumkin (o‘zbek, rus, ingliz) — barcha tillardagi buyurtmalarni tushunib, faqat tasdiqlanganlarini qaytaring.
+
+                    - Faqat JSON formatni qaytaring. Hech qanday izoh yoki matn kerak emas.
+                """
+        
+        summary = process_audio(contents, kind.mime, prompt)
+
+        cleaned = re.sub(r"```json|```", "", summary).strip()
+
+        try:
+            orders_json = json.loads(cleaned)
+        except json.JSONDecodeError:
+            orders_json = {"orders": {}}
+
+        # print(orders_json)
+
+        orders = orders_json.get("orders", None)
+
+        orders_data = []
+        if orders is not None:
+            for v, k in orders.items():
+                item_name = v
+                quantity = k["miqdori"]
+                size = k["hajmi"]
+                data = {"item_id": items_data[item_name]["id"], "quantity": quantity, "size": size if size in items_data[item_name]["size"] else None}
+                orders_data.append(data)
+
+        # print(orders_json)
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": orders_data,
+                "error": {} 
+            }
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": {},
+                "error": str(e)
+            }
+        )
+
 
     
 @app.post("/orders/", response_model=schemas.Order)
