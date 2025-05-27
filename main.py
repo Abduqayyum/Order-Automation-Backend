@@ -173,7 +173,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-allowed_file_types = ["audio/wav", "audio/mp3", "audio/aiff", "audio/aac", "audio/ogg", "audio/flac", "audio/x-wav", "audio/mpeg", "video/webm", "audio/webm"]
+allowed_file_types = ["audio/wav", "audio/mp3", "audio/aiff", "audio/aac", "audio/ogg", "audio/flac", "audio/x-wav", "audio/mpeg"]
 
 @app.post("/stt")
 async def transcribe_audio(audio: UploadFile = File(None)):
@@ -183,17 +183,20 @@ async def transcribe_audio(audio: UploadFile = File(None)):
         
         contents = await audio.read()
         kind = filetype.guess(contents)
+        print(kind.mime, "file type")
+        print("file name", audio.filename)
 
         if kind is None or kind.mime not in allowed_file_types:
             return JSONResponse(status_code=400, content={"success": {}, "error": {"description": f"Invalid file type. Only following audio files are accepted {allowed_file_types}."}})
         
         prompt = "Extract text from audio, conversation might happen only in three language uzbek, english, and russian. Print text in uzbek"
+
         extracted_text = process_audio(contents, kind.mime, prompt)
         
         return JSONResponse(status_code=200, content={"success": {"result": extracted_text}, "error": {}})
     
     except Exception as e:
-        return JSONResponse(status_code=400, content={"success": {}, "error": {"description": e}})
+        return JSONResponse(status_code=400, content={"success": {}, "error": {"description": str(e)}})
         
 
 @app.post("/summarize_order")
