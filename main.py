@@ -173,7 +173,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-allowed_file_types = ["audio/wav", "audio/mp3", "audio/aiff", "audio/aac", "audio/ogg", "audio/flac", "audio/x-wav", "audio/mpeg"]
+allowed_file_types = ["audio/wav", "audio/mp3", "audio/aiff", "audio/aac", "audio/ogg", "audio/flac", "audio/x-wav", "audio/mpeg", "video/webm", "audio/webm"]
 
 @app.post("/stt")
 async def transcribe_audio(audio: UploadFile = File(None)):
