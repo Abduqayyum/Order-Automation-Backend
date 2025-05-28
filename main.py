@@ -129,6 +129,18 @@ items_data = {
     "milkshake_alt": {
         "id": 27, 
         "size": ["M", "L"]
+    },
+    "cup_of_icecream": {
+        "id": 28,
+        "size": ["L", "S"]
+    },
+    "wafers_of_icecream": {
+        "id": 28,
+        "size": ["L", "S"]
+    },
+    "0.5_kg_icecream": {
+        "id": 29,
+        "size": ["S"]
     }
 }
 
@@ -202,7 +214,7 @@ async def transcribe_audio(audio: UploadFile = File(None)):
 @app.post("/summarize_order")
 async def text_summarization(data: PromptRequest):
     try:
-        # prompt = f"Summarize the whole text and just return list of orders (quantity) that the customer ordered. Here is the text: {data}"
+        prompt = f"Summarize the whole text and just return list of orders (quantity) that the customer ordered. Here is the text: {data}"
         prompt = f"""
                     Suhbatda mijoz va xodim o‘rtasidagi buyurtma jarayoni mavjud. Sizdan talab qilinadi:
 
@@ -237,6 +249,7 @@ async def text_summarization(data: PromptRequest):
 
                     Mana suhbat: {data}
                 """
+
         
         summary = summarize_order(prompt)
 
@@ -290,41 +303,47 @@ async def process_audio_file(audio: UploadFile = File(None)):
 
         if kind is None or kind.mime not in allowed_file_types:
             return JSONResponse(status_code=400, content={"success": {}, "error": {"description": f"Invalid file type. Only following audio files are accepted {allowed_file_types}."}})
-        
-        # prompt = f"Summarize the whole text and just return list of orders (quantity) that the customer ordered. Here is the text: {data}"
+ 
         prompt = f"""
-                    Suhbatda mijoz va xodim o‘rtasidagi buyurtma jarayoni mavjud. Sizdan talab qilinadi:
+                    Suhbatda mijoz va xodim o‘rtasida buyurtma jarayoni mavjud.
 
-                    🟢 Faqat **mijozning yakuniy va tasdiqlangan buyurtmalarini** aniqlang (suhbat oxirida mijoz nima buyurtma bergan bo‘lsa, o‘shani).
-                    🔴 Mijoz suhbat davomida o‘zgartirgan yoki bekor qilgan buyurtmalarni hisobga olmang.
+                    Sizdan talab qilinadi:
 
-                    📋 Natijani faqat quyidagi formatda qaytaring:
-                    
-                    {{
-                    "orders": {{
-                        "nomi": {{
-                        "miqdori": 2,
-                        "hajmi": S}}
-                    }}
-                    }}
+                    🟢 Faqat **mijozning yakuniy va tasdiqlangan buyurtmalarini** aniqlang (ya'ni suhbat oxirida mijoz nima buyurtma bergan bo‘lsa, faqat o‘sha mahsulotlar kiritilsin).
+                    🔴 Suhbat davomida mijoz aytgan, lekin keyin o‘zgartirgan yoki bekor qilgan buyurtmalarni hisobga olmang.
 
-                    ❌ Agar suhbat buyurtma bilan bog‘liq bo‘lmasa yoki hech qanday yakuniy buyurtma bo‘lmasa, quyidagicha bo‘lsin:
+                    📋 Natijani faqat quyidagi formatda JSON ko‘rinishida chiqaring:
 
                     {{
-                    "orders": {{}}
+                        "orders": {{
+                            "nomi": {{
+                                "miqdori": <soni>,
+                                "hajmi": "<S|M|L>"
+                            }}
+                        }}
+                    }}
+
+                    ❌ Agar suhbat buyurtma bilan bog‘liq bo‘lmasa yoki hech qanday yakuniy buyurtma bo‘lmasa, quyidagicha qaytaring:
+
+                    {{
+                        "orders": {{}}
                     }}
 
                     📌 Qoidalar:
-                    - bu mahsulotlar nomi natijani manashu listdagi nomga asoslanib qaytar {list(items_data.keys())}
-                    - mojito bu Biron mevali mohito yoki sirop qushilgan mohito
-                    - Faqat mijozning buyurtmasi kerak, xodimning takliflari emas.
-                    - Mijoz o‘zgartirgan yoki bekor qilgan narsalarni JSONga kiritmang.
-                    - Hajmini S, M, L qilib qaytar
-                    - Suhbat aralash tillarda bo‘lishi mumkin (o‘zbek, rus, ingliz) — barcha tillardagi buyurtmalarni tushunib, faqat tasdiqlanganlarini qaytaring.
+                    - Mahsulot nomlari faqat quyidagi ro‘yxatdan bo‘lishi kerak: {list(items_data.keys())}
+                    - **Muzqaymoqlar** quyidagilar bo‘lishi mumkin:
+                        - "cup_of_icecream" — stakanchadagi muzqaymoq
+                        - "wafers_of_icecream" — vafli ichidagi muzqaymoq
+                        - "0.5_kg_icecream" — yarim kilolik muzqaymoq (qadoqlangan)
+                    - Suhbatda "muzqaymoq", "moroje", "ice cream", "stakanli", "vafli", "yarim kilo", "0.5 kilo", "grammli", "cup", "wafer" kabi so‘zlar ushbu mahsulotlarga to‘g‘ri keladi.
+                    - mojito bu **biron mevali mohito** yoki **sirop qo‘shilgan mohito** degani — umumiy holda "mojito" deb yozing.
+                    - Faqat mijoz tomonidan berilgan tasdiqlangan (yakuniy) buyurtmalarni qaytaring.
+                    - Hajmlarni faqat `S`, `M`, `L` deb belgilang. Masalan, "katta", "small", "medium", "big", "kichik", "bolshoy" kabi so‘zlar mos ravishda `S`, `M`, `L` ga moslanadi.
+                    - Suhbat har xil tillarda bo‘lishi mumkin (o‘zbek, rus, ingliz). Model barcha tillarni tushunishi kerak.
+                    - **Faqat JSON qaytaring.** Hech qanday izoh yoki matn yozmang.
 
-                    - Faqat JSON formatni qaytaring. Hech qanday izoh yoki matn kerak emas.
-                """
-        
+                    """
+
         summary = process_audio(contents, kind.mime, prompt)
 
         cleaned = re.sub(r"```json|```", "", summary).strip()
