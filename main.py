@@ -1,5 +1,5 @@
 import io
-from fastapi import FastAPI, File, UploadFile, Depends, HTTPException
+from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, status
 import os
 from fastapi.responses import JSONResponse
 import filetype
@@ -13,11 +13,18 @@ import re
 import json
 from typing import List, Optional
 from sqlalchemy.orm import Session
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from datetime import timedelta
 
 import crud, models, schemas
+import auth_crud, auth_models, auth_schemas
+from auth_utils import (create_access_token, get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES,
+                       create_refresh_token, is_valid_refresh_token, get_user_from_refresh_token,
+                       revoke_refresh_token, revoke_all_user_tokens)
 from database import engine, get_db
 
 models.Base.metadata.create_all(bind=engine)
+auth_models.Base.metadata.create_all(bind=engine)
 
 load_dotenv()
 
@@ -114,7 +121,7 @@ items_data = {
         "id": 23, 
         "size": ["M", "L"]
     },
-    "milkshake": {
+    "dairy_milkshake": {
         "id": 24, 
         "size": ["M", "L"]
     },
@@ -175,7 +182,7 @@ def summarize_order(prompt):
     return response.text
 
 
-app = FastAPI(title="Order Automation API")
+app = FastAPI(title="Order Automation API", root_path="")
 
 app.add_middleware(
     CORSMiddleware,
@@ -183,6 +190,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_origin_regex=r"https?://.*"
 )
 
 allowed_file_types = ["audio/wav", "audio/mp3", "audio/aiff", "audio/aac", "audio/ogg", "audio/flac", "audio/x-wav", "audio/mpeg"]
@@ -214,7 +222,7 @@ async def transcribe_audio(audio: UploadFile = File(None)):
 @app.post("/summarize_order")
 async def text_summarization(data: PromptRequest):
     try:
-        prompt = f"Summarize the whole text and just return list of orders (quantity) that the customer ordered. Here is the text: {data}"
+        # prompt = f"Summarize the whole text and just return list of orders (quantity) that the customer ordered. Here is the text: {data}"
         prompt = f"""
                     Suhbatda mijoz va xodim o‘rtasidagi buyurtma jarayoni mavjud. Sizdan talab qilinadi:
 
@@ -331,11 +339,7 @@ async def process_audio_file(audio: UploadFile = File(None)):
 
                     📌 Qoidalar:
                     - Mahsulot nomlari faqat quyidagi ro‘yxatdan bo‘lishi kerak: {list(items_data.keys())}
-                    - **Muzqaymoqlar** quyidagilar bo‘lishi mumkin:
-                        - "cup_of_icecream" — stakanchadagi muzqaymoq
-                        - "wafers_of_icecream" — vafli ichidagi muzqaymoq
-                        - "0.5_kg_icecream" — yarim kilolik muzqaymoq (qadoqlangan)
-                    - Suhbatda "muzqaymoq", "moroje", "ice cream", "stakanli", "vafli", "yarim kilo", "0.5 kilo", "grammli", "cup", "wafer" kabi so‘zlar ushbu mahsulotlarga to‘g‘ri keladi.
+
                     - mojito bu **biron mevali mohito** yoki **sirop qo‘shilgan mohito** degani — umumiy holda "mojito" deb yozing.
                     - Faqat mijoz tomonidan berilgan tasdiqlangan (yakuniy) buyurtmalarni qaytaring.
                     - Hajmlarni faqat `S`, `M`, `L` deb belgilang. Masalan, "katta", "small", "medium", "big", "kichik", "bolshoy" kabi so‘zlar mos ravishda `S`, `M`, `L` ga moslanadi.
@@ -386,34 +390,97 @@ async def process_audio_file(audio: UploadFile = File(None)):
 
     
 @app.post("/orders/", response_model=schemas.Order)
-async def create_order(order: schemas.OrderCreate, db: Session = Depends(get_db)):
+async def create_order(order: schemas.OrderCreate, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
     return crud.create_order(db=db, order=order)
 
 @app.get("/orders/", response_model=List[schemas.Order])
-async def read_orders(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+async def read_orders(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
     orders = crud.get_orders(db, skip=skip, limit=limit)
     return orders
 
 @app.get("/orders/{order_id}", response_model=schemas.Order)
-async def read_order(order_id: int, db: Session = Depends(get_db)):
+async def read_order(order_id: int, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
     db_order = crud.get_order(db, order_id=order_id)
     if db_order is None:
         raise HTTPException(status_code=404, detail="Order not found")
     return db_order
 
 @app.put("/orders/{order_id}", response_model=schemas.Order)
-async def update_order(order_id: int, order: schemas.OrderCreate, db: Session = Depends(get_db)):
+async def update_order(order_id: int, order: schemas.OrderCreate, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
     db_order = crud.update_order(db, order_id=order_id, order=order)
     if db_order is None:
         raise HTTPException(status_code=404, detail="Order not found")
     return db_order
 
 @app.delete("/orders/{order_id}", response_model=bool)
-async def delete_order(order_id: int, db: Session = Depends(get_db)):
+async def delete_order(order_id: int, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
     result = crud.delete_order(db, order_id=order_id)
     if not result:
         raise HTTPException(status_code=404, detail="Order not found")
     return result
+
+@app.post("/register", response_model=auth_schemas.User)
+async def register_user(user: auth_schemas.UserCreate, db: Session = Depends(get_db)):
+    return auth_crud.create_user(db=db, user=user)
+
+@app.post("/login", response_model=auth_schemas.Token)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = db.query(auth_models.User).filter(auth_models.User.username == form_data.username).first()
+    
+    if not user or not user.verify_password(form_data.password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    
+    refresh_token, _ = create_refresh_token(db, user.id)
+    
+    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
+
+@app.post("/refresh", response_model=auth_schemas.Token)
+async def refresh_access_token(refresh_request: auth_schemas.RefreshTokenRequest, db: Session = Depends(get_db)):
+    if not is_valid_refresh_token(db, refresh_request.refresh_token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    user = get_user_from_refresh_token(db, refresh_request.refresh_token)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    
+    return {"access_token": access_token, "refresh_token": refresh_request.refresh_token, "token_type": "bearer"}
+
+@app.post("/logout")
+async def logout(refresh_request: auth_schemas.RefreshTokenRequest, db: Session = Depends(get_db)):
+    success = revoke_refresh_token(db, refresh_request.refresh_token)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid refresh token"
+        )
+    
+    return {"message": "Successfully logged out"}
+
+@app.get("/users/me", response_model=auth_schemas.User)
+async def read_users_me(current_user: auth_models.User = Depends(get_current_user)):
+    return current_user
 
 @app.get("/")
 async def main_page():
@@ -421,4 +488,4 @@ async def main_page():
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=6000)
+    uvicorn.run("main:app", host="0.0.0.0", port=6000, reload=True, forwarded_allow_ips="*")
