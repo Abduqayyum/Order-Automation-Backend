@@ -184,18 +184,26 @@ def summarize_order(prompt):
 
 app = FastAPI(title="Order Automation API", root_path="")
 
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["*"],
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+#     allow_origin_regex=r"https?://.*"
+# )
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
-    allow_origin_regex=r"https?://.*"
+    allow_headers=["*"]
 )
 
 allowed_file_types = ["audio/wav", "audio/mp3", "audio/aiff", "audio/aac", "audio/ogg", "audio/flac", "audio/x-wav", "audio/mpeg"]
 
-@app.post("/stt")
+@app.post("/stt/")
 async def transcribe_audio(audio: UploadFile = File(None)):
     try:
         if audio is None:
@@ -219,7 +227,7 @@ async def transcribe_audio(audio: UploadFile = File(None)):
         return JSONResponse(status_code=400, content={"success": {}, "error": {"description": str(e)}})
         
 
-@app.post("/summarize_order")
+@app.post("/summarize_order/")
 async def text_summarization(data: PromptRequest):
     try:
         # prompt = f"Summarize the whole text and just return list of orders (quantity) that the customer ordered. Here is the text: {data}"
@@ -298,7 +306,7 @@ async def text_summarization(data: PromptRequest):
             }
         )
     
-@app.post("/summarize_order_from_audio")
+@app.post("/summarize_order_from_audio/")
 async def process_audio_file(audio: UploadFile = File(None)):
     try:
         if audio is None:
@@ -419,11 +427,11 @@ async def delete_order(order_id: int, db: Session = Depends(get_db), current_use
         raise HTTPException(status_code=404, detail="Order not found")
     return result
 
-@app.post("/register", response_model=auth_schemas.User)
+@app.post("/register/", response_model=auth_schemas.User)
 async def register_user(user: auth_schemas.UserCreate, db: Session = Depends(get_db)):
     return auth_crud.create_user(db=db, user=user)
 
-@app.post("/login", response_model=auth_schemas.Token)
+@app.post("/login/", response_model=auth_schemas.Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(auth_models.User).filter(auth_models.User.username == form_data.username).first()
     
@@ -443,7 +451,7 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     
     return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
-@app.post("/refresh", response_model=auth_schemas.Token)
+@app.post("/refresh/", response_model=auth_schemas.Token)
 async def refresh_access_token(refresh_request: auth_schemas.RefreshTokenRequest, db: Session = Depends(get_db)):
     if not is_valid_refresh_token(db, refresh_request.refresh_token):
         raise HTTPException(
@@ -467,7 +475,7 @@ async def refresh_access_token(refresh_request: auth_schemas.RefreshTokenRequest
     
     return {"access_token": access_token, "refresh_token": refresh_request.refresh_token, "token_type": "bearer"}
 
-@app.post("/logout")
+@app.post("/logout/")
 async def logout(refresh_request: auth_schemas.RefreshTokenRequest, db: Session = Depends(get_db)):
     success = revoke_refresh_token(db, refresh_request.refresh_token)
     if not success:
@@ -478,7 +486,7 @@ async def logout(refresh_request: auth_schemas.RefreshTokenRequest, db: Session 
     
     return {"message": "Successfully logged out"}
 
-@app.get("/users/me", response_model=auth_schemas.User)
+@app.get("/users/me/", response_model=auth_schemas.User)
 async def read_users_me(current_user: auth_models.User = Depends(get_current_user)):
     return current_user
 
