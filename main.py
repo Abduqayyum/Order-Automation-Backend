@@ -204,7 +204,7 @@ app.add_middleware(
 allowed_file_types = ["audio/wav", "audio/mp3", "audio/aiff", "audio/aac", "audio/ogg", "audio/flac", "audio/x-wav", "audio/mpeg"]
 
 @app.post("/stt/")
-async def transcribe_audio(audio: UploadFile = File(None)):
+async def transcribe_audio(audio: UploadFile = File(None), current_user: auth_models.User = Depends(get_current_user)):
     try:
         if audio is None:
             return JSONResponse(status_code=400, content={"success": {}, "error": {"description": {"Please upload a file!"}}})
@@ -228,7 +228,7 @@ async def transcribe_audio(audio: UploadFile = File(None)):
         
 
 @app.post("/summarize_order/")
-async def text_summarization(data: PromptRequest):
+async def text_summarization(data: PromptRequest, current_user: auth_models.User = Depends(get_current_user)):
     try:
         # prompt = f"Summarize the whole text and just return list of orders (quantity) that the customer ordered. Here is the text: {data}"
         prompt = f"""
@@ -307,7 +307,7 @@ async def text_summarization(data: PromptRequest):
         )
     
 @app.post("/summarize_order_from_audio/")
-async def process_audio_file(audio: UploadFile = File(None)):
+async def process_audio_file(audio: UploadFile = File(None), current_user: auth_models.User = Depends(get_current_user)):
     try:
         if audio is None:
             return JSONResponse(status_code=400, content={"success": {}, "error": {"description": {"Please upload a file!"}}})
