@@ -1,10 +1,12 @@
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 from datetime import datetime
+from schemas import Organization
 
 class UserBase(BaseModel):
     username: str
     email: EmailStr
+    is_admin: bool = False
 
 class UserCreate(UserBase):
     password: str
@@ -28,6 +30,7 @@ class RefreshToken(RefreshTokenBase):
 class User(UserBase):
     id: int
     refresh_tokens: List[RefreshToken] = []
+    organization: Optional[Organization] = None
 
     class Config:
         orm_mode = True

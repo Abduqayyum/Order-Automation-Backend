@@ -1,5 +1,5 @@
 import io
-from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Form, BackgroundTasks, Request, status
 import os
 from fastapi.responses import JSONResponse
 import filetype
@@ -15,142 +15,66 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from datetime import timedelta
+import psycopg2
+from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+import logging
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 
 import crud, models, schemas
 import auth_crud, auth_models, auth_schemas
 from auth_utils import (create_access_token, get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES,
                        create_refresh_token, is_valid_refresh_token, get_user_from_refresh_token,
                        revoke_refresh_token, revoke_all_user_tokens)
-from database import engine, get_db
+from data_transformation import new_data
+from database import SessionLocal, engine, get_db, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME
+
+from pydantic import BaseModel
+
+class Item(BaseModel):
+    name: str
+    quantity: int
+
+def ensure_database_exists():
+    logger = logging.getLogger("database_init")
+    logger.setLevel(logging.INFO)
+    
+    try:
+        logger.info(f"Checking if database {DB_NAME} exists...")
+        conn = psycopg2.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            port=DB_PORT,
+            database="postgres"  
+        )
+        conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+        
+        cursor = conn.cursor()
+        
+        cursor.execute(f"SELECT 1 FROM pg_catalog.pg_database WHERE datname = '{DB_NAME}'")
+        exists = cursor.fetchone()
+        
+        if not exists:
+            logger.info(f"Creating database '{DB_NAME}'...")
+            cursor.execute(f"CREATE DATABASE {DB_NAME}")
+            logger.info("Database created successfully!")
+        else:
+            logger.info(f"Database '{DB_NAME}' already exists.")
+        
+        cursor.close()
+        conn.close()
+        
+        return True
+    except Exception as e:
+        logger.error(f"Error creating database: {str(e)}")
+        return False
+
+ensure_database_exists()
 
 models.Base.metadata.create_all(bind=engine)
 auth_models.Base.metadata.create_all(bind=engine)
 
 load_dotenv()
-
-items_data = {
-    "espresso": {
-        "id": 1, 
-        "size": ["M"]
-    },
-    "americano": {
-        "id": 2, 
-        "size": ["S", "M", "L"]
-    },
-    "cappuccino": {
-        "id": 3, 
-        "size": ["S", "M", "L"]
-    },
-    "latte": {
-        "id": 4, 
-        "size": ["M", "L"]
-    },
-    "raf": {
-        "id": 5, 
-        "size": ["S", "M", "L"]
-    },
-    "flat_white": {
-        "id": 6, 
-        "size": ["M"]
-    },
-    "mocha": {
-        "id": 7, 
-        "size": ["L"]
-    },
-    "lemon_tea": {
-        "id": 8, 
-        "size": ["S", "M", "L"]
-    },
-    "ginger_tea": {
-        "id": 9, 
-        "size": ["S", "M", "L"]
-    },
-    "sea_buckthorn": {
-        "id": 10, 
-        "size": ["S", "M", "L"]
-    },
-    "cranberry": {
-        "id": 11, 
-        "size": ["S", "M", "L"]
-    },
-    "raspberry_berry": {
-        "id": 12, 
-        "size": ["S", "M", "L"]
-    },
-    "cocoa": {
-        "id": 13, 
-        "size": ["L"]
-    },
-    "hot_chocolate": {
-        "id": 14, 
-        "size": ["L"]
-    },
-    "iced_americano": {
-        "id": 15, 
-        "size": ["M", "L"]
-    },
-    "iced_cappuccino": {
-        "id": 16, 
-        "size": ["M", "L"]
-    },
-    "iced_latte": {
-        "id": 17, 
-        "size": ["M", "L"]
-    },
-    "iced_raf": {
-        "id": 18, 
-        "size": ["M", "L"]
-    },
-    "frappuccino": {
-        "id": 19, 
-        "size": ["M", "L"]
-    },
-    "mojito_classic": {
-        "id": 20, 
-        "size": ["M", "L"]
-    },
-    "mojito_energy": {
-        "id": 21, 
-        "size": ["M", "L"]
-    },
-    "mojito": {
-        "id": 22, 
-        "size": ["M", "L"]
-    },
-    "iced_tea": {
-        "id": 23, 
-        "size": ["M", "L"]
-    },
-    "dairy_milkshake": {
-        "id": 24, 
-        "size": ["M", "L"]
-    },
-    "chocolate_milkshake": {
-        "id": 25, 
-        "size": ["M", "L"]
-    },
-    "banana_milkshake": {
-        "id": 26, 
-        "size": ["M", "L"]
-    },
-    "milkshake_alt": {
-        "id": 27, 
-        "size": ["M", "L"]
-    },
-    "cup_of_icecream": {
-        "id": 28,
-        "size": ["L", "S"]
-    },
-    "wafers_of_icecream": {
-        "id": 28,
-        "size": ["L", "S"]
-    },
-    "0.5_kg_icecream": {
-        "id": 29,
-        "size": ["S"]
-    }
-}
-
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", None)
 
@@ -184,15 +108,6 @@ def summarize_order(prompt):
 
 app = FastAPI(title="Order Automation API", root_path="")
 
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=["*"],
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-#     allow_origin_regex=r"https?://.*"
-# )
-
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"https?://.*",
@@ -200,6 +115,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"]
 )
+
+@app.exception_handler(SQLAlchemyError)
+async def sqlalchemy_exception_handler(request: Request, exc: SQLAlchemyError):
+    error_message = str(exc)
+    
+    if isinstance(exc, IntegrityError):
+        if "violates foreign key constraint" in error_message:
+            if "products_organization_id_fkey" in error_message:
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "The specified organization does not exist. Please use a valid organization ID."}
+                )
+            elif "orders_organization_id_fkey" in error_message:
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "The specified organization does not exist. Please use a valid organization ID."}
+                )
+    
+    return JSONResponse(
+        status_code=400,
+        content={"detail": f"Database error: {error_message}"})
+
 
 allowed_file_types = ["audio/wav", "audio/mp3", "audio/aiff", "audio/aac", "audio/ogg", "audio/flac", "audio/x-wav", "audio/mpeg"]
 
@@ -227,87 +164,9 @@ async def transcribe_audio(audio: UploadFile = File(None), current_user: auth_mo
         return JSONResponse(status_code=400, content={"success": {}, "error": {"description": str(e)}})
         
 
-@app.post("/summarize_order/")
-async def text_summarization(data: PromptRequest, current_user: auth_models.User = Depends(get_current_user)):
-    try:
-        # prompt = f"Summarize the whole text and just return list of orders (quantity) that the customer ordered. Here is the text: {data}"
-        prompt = f"""
-                    Suhbatda mijoz va xodim o‘rtasidagi buyurtma jarayoni mavjud. Sizdan talab qilinadi:
-
-                    🟢 Faqat **mijozning yakuniy va tasdiqlangan buyurtmalarini** aniqlang (suhbat oxirida mijoz nima buyurtma bergan bo‘lsa, o‘shani).
-                    🔴 Mijoz suhbat davomida o‘zgartirgan yoki bekor qilgan buyurtmalarni hisobga olmang.
-
-                    📋 Natijani faqat quyidagi formatda qaytaring:
-                    
-                    {{
-                    "orders": {{
-                        "nomi": {{
-                        "miqdori": 2,
-                        "hajmi": S}}
-                    }}
-                    }}
-
-                    ❌ Agar suhbat buyurtma bilan bog‘liq bo‘lmasa yoki hech qanday yakuniy buyurtma bo‘lmasa, quyidagicha bo‘lsin:
-
-                    {{
-                    "orders": {{}}
-                    }}
-
-                    📌 Qoidalar:
-                    - bu mahsulotlar nomi natijani manashu listdagi nomga asoslanib qaytar {list(items_data.keys())}
-                    - mojito bu Biron mevali mohito yoki sirop qushilgan mohito
-                    - Faqat mijozning buyurtmasi kerak, xodimning takliflari emas.
-                    - Mijoz o‘zgartirgan yoki bekor qilgan narsalarni JSONga kiritmang.
-                    - Hajmini S, M, L qilib qaytar
-                    - Suhbat aralash tillarda bo‘lishi mumkin (o‘zbek, rus, ingliz) — barcha tillardagi buyurtmalarni tushunib, faqat tasdiqlanganlarini qaytaring.
-
-                    - Faqat JSON formatni qaytaring. Hech qanday izoh yoki matn kerak emas.
-
-                    Mana suhbat: {data}
-                """
-
-        
-        summary = summarize_order(prompt)
-
-        cleaned = re.sub(r"```json|```", "", summary).strip()
-
-        try:
-            orders_json = json.loads(cleaned)
-        except json.JSONDecodeError:
-            orders_json = {"orders": {}}
-
-        # print(orders_json)
-
-        orders = orders_json.get("orders", None)
-
-        orders_data = []
-        if orders is not None:
-            for v, k in orders.items():
-                item_name = v
-                quantity = k["miqdori"]
-                size = k["hajmi"]
-                data = {"item_id": items_data[item_name]["id"], "quantity": quantity, "size": size if size in items_data[item_name]["size"] else None}
-                orders_data.append(data)
-
-        # print(orders_json)
-        return JSONResponse(
-            status_code=200,
-            content={
-                "success": orders_data,
-                "error": {} 
-            }
-        )
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={
-                "success": {},
-                "error": str(e)
-            }
-        )
     
 @app.post("/summarize_order_from_audio/")
-async def process_audio_file(audio: UploadFile = File(None), current_user: auth_models.User = Depends(get_current_user)):
+async def process_audio_file(audio: UploadFile = File(None), current_user: auth_models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
         if audio is None:
             return JSONResponse(status_code=400, content={"success": {}, "error": {"description": {"Please upload a file!"}}})
@@ -319,66 +178,57 @@ async def process_audio_file(audio: UploadFile = File(None), current_user: auth_
 
         if kind is None or kind.mime not in allowed_file_types:
             return JSONResponse(status_code=400, content={"success": {}, "error": {"description": f"Invalid file type. Only following audio files are accepted {allowed_file_types}."}})
- 
-        prompt = f"""
-                    Suhbatda mijoz va xodim o‘rtasida buyurtma jarayoni mavjud.
+        
+        if current_user.organization_id:
+            products = auth_crud.get_products_by_organization(db, current_user.organization_id)
+            products_data = {product.label_for_ai: product.id for product in products}
+            print(products_data)
+        else:
+            products_data = dict()
+        print(products_data)
+        mime_type = kind.mime
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents = [
+                f"""
+                Here is the list of valid items you can use in the response: {list(products_data.keys())}
 
-                    Sizdan talab qilinadi:
+                Your task is to analyze the conversation audio and extract only the final confirmed orders based on this list.
 
-                    🟢 Faqat **mijozning yakuniy va tasdiqlangan buyurtmalarini** aniqlang (ya'ni suhbat oxirida mijoz nima buyurtma bergan bo‘lsa, faqat o‘sha mahsulotlar kiritilsin).
-                    🔴 Suhbat davomida mijoz aytgan, lekin keyin o‘zgartirgan yoki bekor qilgan buyurtmalarni hisobga olmang.
+                Strictly follow these rules:
 
-                    📋 Natijani faqat quyidagi formatda JSON ko‘rinishida chiqaring:
+                - Only include items that are in the above list. If an item is not in the list, do NOT include it in the response.
+                - Only include items that the speaker has clearly confirmed they want to order.
+                - If an item is canceled, changed, or rejected during the conversation, do NOT include it.
+                - If the user does not mention the size of the product, and size is important for that item, do NOT include it.
+                - The conversation may be in Uzbek, Russian, or English. Accurately understand the language and context.
+                - If the conversation is not about placing an order, return an empty list: []
 
-                    {{
-                        "orders": {{
-                            "nomi": {{
-                                "miqdori": <soni>,
-                                "hajmi": "<S|M|L>"
-                            }}
-                        }}
-                    }}
+                Return the result as a JSON list **with no explanation**, only in this exact format:
+                [
+                {{"name": "item_name", "quantity": 1}},
+                {{"name": "item_name_2", "quantity": 2}}
+                ]
 
-                    ❌ Agar suhbat buyurtma bilan bog‘liq bo‘lmasa yoki hech qanday yakuniy buyurtma bo‘lmasa, quyidagicha qaytaring:
+                If no valid items are ordered, return: []
 
-                    {{
-                        "orders": {{}}
-                    }}
+                """,
+                types.Part.from_bytes(
+                    data=contents,
+                    mime_type=mime_type
+                )
+            ],
+            config={
+                "response_mime_type": "application/json",
+                "response_schema": list[Item],
+            },
+        )
 
-                    📌 Qoidalar:
-                    - Mahsulot nomlari faqat quyidagi ro‘yxatdan bo‘lishi kerak: {list(items_data.keys())}
+        print(response.text)
 
-                    - mojito bu **biron mevali mohito** yoki **sirop qo‘shilgan mohito** degani — umumiy holda "mojito" deb yozing.
-                    - Faqat mijoz tomonidan berilgan tasdiqlangan (yakuniy) buyurtmalarni qaytaring.
-                    - Hajmlarni faqat `S`, `M`, `L` deb belgilang. Masalan, "katta", "small", "medium", "big", "kichik", "bolshoy" kabi so‘zlar mos ravishda `S`, `M`, `L` ga moslanadi.
-                    - Suhbat har xil tillarda bo‘lishi mumkin (o‘zbek, rus, ingliz). Model barcha tillarni tushunishi kerak.
-                    - **Faqat JSON qaytaring.** Hech qanday izoh yoki matn yozmang.
+        orders: list[Item] = response.parsed
+        orders_data = [{"item_id": products_data.get(dict(item)["name"]), "quantity": dict(item)["quantity"]} for item in orders]
 
-                    """
-
-        summary = process_audio(contents, kind.mime, prompt)
-
-        cleaned = re.sub(r"```json|```", "", summary).strip()
-
-        try:
-            orders_json = json.loads(cleaned)
-        except json.JSONDecodeError:
-            orders_json = {"orders": {}}
-
-        # print(orders_json)
-
-        orders = orders_json.get("orders", None)
-
-        orders_data = []
-        if orders is not None:
-            for v, k in orders.items():
-                item_name = v
-                quantity = k["miqdori"]
-                size = k["hajmi"]
-                data = {"item_id": items_data[item_name]["id"], "quantity": quantity, "size": size if size in items_data[item_name]["size"] else None}
-                orders_data.append(data)
-
-        # print(orders_json)
         return JSONResponse(
             status_code=200,
             content={
@@ -395,37 +245,115 @@ async def process_audio_file(audio: UploadFile = File(None), current_user: auth_
             }
         )
 
-
     
 @app.post("/orders/", response_model=schemas.Order)
 async def create_order(order: schemas.OrderCreate, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
-    return crud.create_order(db=db, order=order)
+    db_order = models.Order(total_price=0.0, organization_id=current_user.organization_id)
+    db.add(db_order)
+    db.commit()
+    db.refresh(db_order)
+    
+    total_price = 0.0
+    for item_data in order.items:
+        product = auth_crud.get_product(db, item_data.item_id)
+        if not product:
+            raise HTTPException(status_code=404, detail=f"Product with ID {item_data.item_id} not found")
+            
+        if not current_user.is_admin and product.organization_id != current_user.organization_id:
+            raise HTTPException(status_code=403, detail=f"Access denied for product with ID {item_data.item_id}")
+        
+        item_price = product.price
+        
+        db_item = models.OrderItem(
+            order_id=db_order.id,
+            item_id=item_data.item_id,
+            quantity=item_data.quantity,
+            price=item_price
+        )
+        db.add(db_item)
+        
+        item_total = item_price * item_data.quantity
+        total_price += item_total
+    
+    db_order.total_price = total_price
+    
+    db.commit()
+    db.refresh(db_order)
+    return db_order
 
 @app.get("/orders/", response_model=List[schemas.Order])
 async def read_orders(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
-    orders = crud.get_orders(db, skip=skip, limit=limit)
-    return orders
+    if current_user.organization_id:
+        return db.query(models.Order).filter(models.Order.organization_id == current_user.organization_id).offset(skip).limit(limit).all()
+    if current_user.is_admin:
+        return db.query(models.Order).offset(skip).limit(limit).all()
+    return []
 
 @app.get("/orders/{order_id}", response_model=schemas.Order)
 async def read_order(order_id: int, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
-    db_order = crud.get_order(db, order_id=order_id)
+    db_order = db.query(models.Order).filter(models.Order.id == order_id).first()
     if db_order is None:
         raise HTTPException(status_code=404, detail="Order not found")
+    
+    if not current_user.is_admin and (current_user.organization_id is None or current_user.organization_id != db_order.organization_id):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
     return db_order
 
 @app.put("/orders/{order_id}", response_model=schemas.Order)
 async def update_order(order_id: int, order: schemas.OrderCreate, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
-    db_order = crud.update_order(db, order_id=order_id, order=order)
+    db_order = db.query(models.Order).filter(models.Order.id == order_id).first()
     if db_order is None:
         raise HTTPException(status_code=404, detail="Order not found")
+    
+    if not current_user.is_admin and (current_user.organization_id is None or current_user.organization_id != db_order.organization_id):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    db.query(models.OrderItem).filter(models.OrderItem.order_id == order_id).delete()
+    
+    total_price = 0.0
+    for item_data in order.items:
+        product = auth_crud.get_product(db, item_data.item_id)
+        if not product:
+            raise HTTPException(status_code=404, detail=f"Product with ID {item_data.item_id} not found")
+            
+        if not current_user.is_admin and product.organization_id != current_user.organization_id:
+            raise HTTPException(status_code=403, detail=f"Access denied for product with ID {item_data.item_id}")
+        
+        item_price = product.price
+        
+        db_item = models.OrderItem(
+            order_id=db_order.id,
+            item_id=item_data.item_id,
+            quantity=item_data.quantity,
+            price=item_price
+        )
+        db.add(db_item)
+        
+        item_total = item_price * item_data.quantity
+        total_price += item_total
+    
+    db_order.total_price = total_price
+    
+    db.commit()
+    db.refresh(db_order)
     return db_order
 
 @app.delete("/orders/{order_id}", response_model=bool)
 async def delete_order(order_id: int, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
-    result = crud.delete_order(db, order_id=order_id)
-    if not result:
+    db_order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    if db_order is None:
         raise HTTPException(status_code=404, detail="Order not found")
-    return result
+    
+    if not current_user.is_admin and (current_user.organization_id is None or current_user.organization_id != db_order.organization_id):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    db.query(models.OrderItem).filter(models.OrderItem.order_id == order_id).delete()
+    
+    db.delete(db_order)
+    db.commit()
+    
+    return True
 
 @app.post("/register/", response_model=auth_schemas.User)
 async def register_user(user: auth_schemas.UserCreate, db: Session = Depends(get_db)):
@@ -489,6 +417,96 @@ async def logout(refresh_request: auth_schemas.RefreshTokenRequest, db: Session 
 @app.get("/users/me/", response_model=auth_schemas.User)
 async def read_users_me(current_user: auth_models.User = Depends(get_current_user)):
     return current_user
+
+
+@app.post("/products/", response_model=schemas.Product)
+async def create_product(product: schemas.ProductCreate, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+    try:
+        if not current_user.is_admin:
+            if current_user.organization_id is None:
+                raise HTTPException(status_code=403, detail="You must belong to an organization to create products")
+            product.organization_id = current_user.organization_id
+        else:
+            organization = auth_crud.get_organization(db, product.organization_id)
+            if not organization:
+                raise HTTPException(status_code=400, detail=f"Organization with ID {product.organization_id} does not exist")
+        
+        return auth_crud.create_product(db=db, product=product)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error creating product: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"An error occurred while creating the product: {str(e)}")
+
+@app.get("/products/", response_model=List[schemas.Product])
+async def read_products(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+    if current_user.organization_id:
+        return auth_crud.get_products_by_organization(db, organization_id=current_user.organization_id, skip=skip, limit=limit)
+    if current_user.is_admin:
+        return db.query(models.Product).offset(skip).limit(limit).all()
+    return []
+
+@app.get("/products/{product_id}", response_model=schemas.Product)
+async def read_product(product_id: int, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+    db_product = auth_crud.get_product(db, product_id=product_id)
+    if db_product is None:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if not current_user.is_admin and current_user.organization_id != db_product.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    return db_product
+
+@app.put("/products/{product_id}", response_model=schemas.Product)
+async def update_product(product_id: int, product: schemas.ProductCreate, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+    try:
+        db_product = auth_crud.get_product(db, product_id=product_id)
+        if db_product is None:
+            raise HTTPException(status_code=404, detail="Product not found")
+            
+        if not current_user.is_admin and current_user.organization_id != db_product.organization_id:
+            raise HTTPException(status_code=403, detail="You can only update products from your organization")
+            
+        if not current_user.is_admin:
+            if current_user.organization_id is None:
+                raise HTTPException(status_code=403, detail="You must belong to an organization to update products")
+            product.organization_id = current_user.organization_id
+        else:
+            organization = auth_crud.get_organization(db, product.organization_id)
+            if not organization:
+                raise HTTPException(status_code=400, detail=f"Organization with ID {product.organization_id} does not exist")
+            
+        return auth_crud.update_product(db=db, product_id=product_id, product_data=product)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error updating product: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"An error occurred while updating the product: {str(e)}")
+
+@app.delete("/products/{product_id}")
+async def delete_product(product_id: int, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+    try:
+        db_product = auth_crud.get_product(db, product_id=product_id)
+        if db_product is None:
+            raise HTTPException(status_code=404, detail="Product not found")
+            
+        if not current_user.is_admin and current_user.organization_id != db_product.organization_id:
+            raise HTTPException(status_code=403, detail="You can only delete products from your organization")
+        
+        if not current_user.is_admin and current_user.organization_id is None:
+            raise HTTPException(status_code=403, detail="You must belong to an organization to delete products")
+            
+        return auth_crud.delete_product(db=db, product_id=product_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error deleting product: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"An error occurred while deleting the product: {str(e)}")
+
+# @app.put("/users/{user_id}/organization/{organization_id}", response_model=auth_schemas.User)
+# async def assign_user_to_organization(user_id: int, organization_id: int, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+#     if not current_user.is_admin:
+#         raise HTTPException(status_code=403, detail="Only admin users can assign users to organizations")
+#     return auth_crud.update_user_organization(db=db, user_id=user_id, organization_id=organization_id)
+
 
 @app.get("/")
 async def main_page():

@@ -1,12 +1,11 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 class OrderItemBase(BaseModel):
     item_id: int
     quantity: int
-    size: str
-    price: float
+    price: Optional[float] = None  
 
 class OrderItemCreate(OrderItemBase):
     pass
@@ -20,15 +19,54 @@ class OrderItem(OrderItemBase):
 
 class OrderBase(BaseModel):
     total_price: Optional[float] = 0.0
+    organization_id: Optional[int] = None
 
 class OrderCreate(OrderBase):
-    items: List[OrderItemCreate]
+    items: List[OrderItemCreate] = []
 
 class Order(OrderBase):
     id: int
     created_at: datetime
     total_price: float
-    items: List[OrderItem]
+    organization_id: Optional[int] = None
+    items: List[OrderItem] = []
+
+    class Config:
+        orm_mode = True
+
+
+class OrganizationBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+
+class OrganizationCreate(OrganizationBase):
+    pass
+
+
+class Organization(OrganizationBase):
+    id: int
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+
+class ProductBase(BaseModel):
+    name: str
+    organization_id: int
+    price: float
+    label_for_ai: str
+
+
+class ProductCreate(ProductBase):
+    pass
+
+
+class Product(ProductBase):
+    id: int
+    created_at: datetime
 
     class Config:
         orm_mode = True

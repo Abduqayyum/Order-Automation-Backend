@@ -13,7 +13,11 @@ class User(Base):
     username = Column(String, unique=True, index=True)
     email = Column(String, unique=True, index=True)
     hashed_password = Column(String)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
+    is_admin = Column(Boolean, default=False)
+    
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
+    organization = relationship("Organization", back_populates="users")
 
     def verify_password(self, password):
         return pwd_context.verify(password, self.hashed_password)
