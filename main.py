@@ -25,7 +25,7 @@ import auth_crud, auth_models, auth_schemas
 from auth_utils import (create_access_token, get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES,
                        create_refresh_token, is_valid_refresh_token, get_user_from_refresh_token,
                        revoke_refresh_token, revoke_all_user_tokens)
-from data_transformation import new_data
+
 from database import SessionLocal, engine, get_db, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME
 
 from pydantic import BaseModel
