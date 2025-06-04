@@ -31,7 +31,7 @@ from database import SessionLocal, engine, get_db, DB_USER, DB_PASSWORD, DB_HOST
 from pydantic import BaseModel
 
 class Item(BaseModel):
-    name: str
+    id: int
     quantity: int
 
 def ensure_database_exists():
@@ -173,7 +173,6 @@ async def process_audio_file(audio: UploadFile = File(None), current_user: auth_
         
         contents = await audio.read()
         kind = filetype.guess(contents)
-        print(kind.mime, "file type")
         print("file name", audio.filename)
 
         if kind is None or kind.mime not in allowed_file_types:
@@ -181,17 +180,19 @@ async def process_audio_file(audio: UploadFile = File(None), current_user: auth_
         
         if current_user.organization_id:
             products = auth_crud.get_products_by_organization(db, current_user.organization_id)
-            products_data = {product.label_for_ai: product.id for product in products}
+            # products_data = {product.label_for_ai: product.id for product in products}
+            products_data = [{"id": product.id, "labe_for_ai": product.label_for_ai} for product in products]
             print(products_data)
         else:
-            products_data = dict()
+            products_data = list()
         print(products_data)
         mime_type = kind.mime
+
         response = client.models.generate_content(
             model="gemini-2.0-flash",
             contents = [
                 f"""
-                Here is the list of valid items you can use in the response: {list(products_data.keys())}
+                Here is the list of valid items you can use in the response: {products_data}
 
                 Your task is to analyze the conversation audio and extract only the final confirmed orders based on this list.
 
@@ -200,14 +201,13 @@ async def process_audio_file(audio: UploadFile = File(None), current_user: auth_
                 - Only include items that are in the above list. If an item is not in the list, do NOT include it in the response.
                 - Only include items that the speaker has clearly confirmed they want to order.
                 - If an item is canceled, changed, or rejected during the conversation, do NOT include it.
-                - If the user does not mention the size of the product, and size is important for that item, do NOT include it.
                 - The conversation may be in Uzbek, Russian, or English. Accurately understand the language and context.
                 - If the conversation is not about placing an order, return an empty list: []
 
                 Return the result as a JSON list **with no explanation**, only in this exact format:
                 [
-                {{"name": "item_name", "quantity": 1}},
-                {{"name": "item_name_2", "quantity": 2}}
+                {{"id": 1, "quantity": 1}},
+                {{"id": 2, "quantity": 2}}
                 ]
 
                 If no valid items are ordered, return: []
@@ -227,7 +227,8 @@ async def process_audio_file(audio: UploadFile = File(None), current_user: auth_
         print(response.text)
 
         orders: list[Item] = response.parsed
-        orders_data = [{"item_id": products_data.get(dict(item)["name"]), "quantity": dict(item)["quantity"]} for item in orders]
+        print(orders)
+        orders_data = [{"item_id": dict(item)["id"], "quantity": dict(item)["quantity"]} for item in orders]
 
         return JSONResponse(
             status_code=200,
