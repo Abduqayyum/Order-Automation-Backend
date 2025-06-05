@@ -201,8 +201,9 @@ async def process_audio_file(audio: UploadFile = File(None), current_user: auth_
                 - Only include items that are in the above list. If an item is not in the list, do NOT include it in the response.
                 - Only include items that the speaker has clearly confirmed they want to order.
                 - If an item is canceled, changed, or rejected during the conversation, do NOT include it.
-                - The conversation may be in Uzbek, Russian, or English. Accurately understand the language and context.
+                - The conversation may be in Uzbek, Russian, Tajik, or English. Accurately understand the language and context.
                 - If the conversation is not about placing an order, return an empty list: []
+                - Here the meaning of sizes in tajik: Small - Xutarak, Medium - Sredniy, Large - Kalun.
 
                 Return the result as a JSON list **with no explanation**, only in this exact format:
                 [
