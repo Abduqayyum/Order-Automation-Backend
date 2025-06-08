@@ -109,7 +109,7 @@ class PromptRequest(BaseModel):
 
 def process_audio(audio_bytes, mime_type, prompt):
     response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-2.5-flash-preview-05-20',
             contents = [
                 prompt,
                 types.Part.from_bytes(
@@ -214,7 +214,8 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
         mime_type = kind.mime
 
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            # model="gemini-2.0-flash",
+            model = "gemini-2.5-flash-preview-05-20",
             contents = [
                 f"""
                 Here is the list of valid items you can use in the response: {products_data}
