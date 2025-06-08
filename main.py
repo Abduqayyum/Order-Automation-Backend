@@ -10,6 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 import re
+from fastapi import BackgroundTasks
+from datetime import datetime
 import json
 from typing import List, Optional
 from sqlalchemy.orm import Session
@@ -26,9 +28,31 @@ from auth_utils import (create_access_token, get_current_user, ACCESS_TOKEN_EXPI
                        create_refresh_token, is_valid_refresh_token, get_user_from_refresh_token,
                        revoke_refresh_token, revoke_all_user_tokens)
 
-from database import SessionLocal, engine, get_db, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME
+from database import SessionLocal, engine, get_db, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME, CHAT_ID, BOT_TOKEN
 
 from pydantic import BaseModel
+
+
+def send_to_telegram(contents: bytes, filename: str, orders_data: list):
+    import requests
+
+    message = f"🧾 New Order Extracted:\n\n{json.dumps(orders_data, indent=2)}"
+
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendAudio",
+            data={"chat_id": CHAT_ID},
+            files={"audio": (filename, io.BytesIO(contents))}
+        )
+
+        requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            data={"chat_id": CHAT_ID, "text": message}
+        )
+
+    except Exception as e:
+        print("Telegram send error:", e)
+
 
 class Item(BaseModel):
     id: int
@@ -163,10 +187,9 @@ async def transcribe_audio(audio: UploadFile = File(None), current_user: auth_mo
     except Exception as e:
         return JSONResponse(status_code=400, content={"success": {}, "error": {"description": str(e)}})
         
-
     
 @app.post("/summarize_order_from_audio/")
-async def process_audio_file(audio: UploadFile = File(None), current_user: auth_models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFile = File(None), current_user: auth_models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
         if audio is None:
             return JSONResponse(status_code=400, content={"success": {}, "error": {"description": {"Please upload a file!"}}})
@@ -181,11 +204,13 @@ async def process_audio_file(audio: UploadFile = File(None), current_user: auth_
         if current_user.organization_id:
             products = auth_crud.get_products_by_organization(db, current_user.organization_id)
             # products_data = {product.label_for_ai: product.id for product in products}
-            products_data = [{"id": product.id, "labe_for_ai": product.label_for_ai} for product in products]
+            products_data = [{"id": product.id, "label_for_ai": product.label_for_ai} for product in products]
             print(products_data)
         else:
             products_data = list()
-        print(products_data)
+
+        filename = f"{datetime.utcnow().isoformat()}_{audio.filename}"
+        
         mime_type = kind.mime
 
         response = client.models.generate_content(
@@ -225,12 +250,17 @@ async def process_audio_file(audio: UploadFile = File(None), current_user: auth_
             },
         )
 
-        print(response.text)
+        # print(response.text)
 
         orders: list[Item] = response.parsed
-        print(orders)
         orders_data = [{"item_id": dict(item)["id"], "quantity": dict(item)["quantity"]} for item in orders]
+        orders_data_for_bot = [{"item_id": dict(item)["id"], "quantity": dict(item)["quantity"]} for item in orders]
+        for order in orders_data_for_bot:
+            for product in products_data:
+                if product["id"] == order["item_id"]:
+                    order["label_for_ai"] = product["label_for_ai"]
 
+        background_tasks.add_task(send_to_telegram, contents, filename, orders_data_for_bot)
         return JSONResponse(
             status_code=200,
             content={
