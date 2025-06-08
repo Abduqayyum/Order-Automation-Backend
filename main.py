@@ -204,7 +204,8 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
         if current_user.organization_id:
             products = auth_crud.get_products_by_organization(db, current_user.organization_id)
             # products_data = {product.label_for_ai: product.id for product in products}
-            products_data = [{"id": product.id, "label_for_ai": product.label_for_ai} for product in products]
+            # products_data = [{"id": product.id, "label_for_ai": product.label_for_ai} for product in products]
+            products_data = [{"id": product.id, "name": product.name} for product in products]
             print(products_data)
         else:
             products_data = list()
@@ -259,7 +260,7 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
         for order in orders_data_for_bot:
             for product in products_data:
                 if product["id"] == order["item_id"]:
-                    order["label_for_ai"] = product["label_for_ai"]
+                    order["name"] = product["name"]
 
         background_tasks.add_task(send_to_telegram, contents, filename, orders_data_for_bot)
         return JSONResponse(
