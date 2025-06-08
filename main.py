@@ -109,7 +109,7 @@ class PromptRequest(BaseModel):
 
 def process_audio(audio_bytes, mime_type, prompt):
     response = client.models.generate_content(
-            model='gemini-2.5-flash-preview-05-20',
+            model='gemini-2.0-flash',
             contents = [
                 prompt,
                 types.Part.from_bytes(
@@ -204,8 +204,8 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
         if current_user.organization_id:
             products = auth_crud.get_products_by_organization(db, current_user.organization_id)
             # products_data = {product.label_for_ai: product.id for product in products}
-            # products_data = [{"id": product.id, "label_for_ai": product.label_for_ai} for product in products]
-            products_data = [{"id": product.id, "name": product.name} for product in products]
+            products_data = [{"id": product.id, "label_for_ai": product.label_for_ai} for product in products]
+            # products_data = [{"id": product.id, "name": product.name} for product in products]
             print(products_data)
         else:
             products_data = list()
@@ -214,42 +214,69 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
         
         mime_type = kind.mime
 
-        response = client.models.generate_content(
-            # model="gemini-2.0-flash",
-            model = "gemini-2.5-flash-preview-05-20",
-            contents = [
-                f"""
-                Here is the list of valid items you can use in the response: {products_data}
+        prompt = prompt = f"""
+            You are an expert assistant that extracts confirmed product orders from conversation audio.
 
-                Your task is to analyze the conversation audio and extract only the final confirmed orders based on this list.
+            Here is a list of valid products you must match against:
+            {products_data}
 
-                Strictly follow these rules:
+            Your task:
+            - Analyze the conversation and return only the final confirmed orders.
+            - Include ONLY products present in the list above.
+            - Exclude any item not in the list, even if it's mentioned.
+            - Do NOT include items that were canceled, changed, or rejected.
+            - The conversation may be in Uzbek, Russian, Tajik, or English. Match appropriately.
+            - Tajik translations: Small - Xutarak, Medium - Sredniy, Large - Kalun.
+            - If no valid items are confirmed, return: []
 
-                - Only include items that are in the above list. If an item is not in the list, do NOT include it in the response.
-                - Only include items that the speaker has clearly confirmed they want to order.
-                - If an item is canceled, changed, or rejected during the conversation, do NOT include it.
-                - The conversation may be in Uzbek, Russian, Tajik, or English. Accurately understand the language and context.
-                - If the conversation is not about placing an order, return an empty list: []
-                - Here the meaning of sizes in tajik: Small - Xutarak, Medium - Sredniy, Large - Kalun.
-
-                Return the result as a JSON list **with no explanation**, only in this exact format:
-                [
+            Return a JSON list with no extra explanation, in this exact format:
+            [
                 {{"id": 1, "quantity": 1}},
                 {{"id": 2, "quantity": 2}}
-                ]
+            ]
+            """
 
-                If no valid items are ordered, return: []
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            # model = "gemini-2.5-flash-preview-05-20",
+            # contents = [
+            #     f"""
+            #     Here is the list of valid items you can use in the response: {products_data}
 
-                """,
-                types.Part.from_bytes(
+            #     Your task is to analyze the conversation audio and extract only the final confirmed orders based on this list.
+
+            #     Strictly follow these rules:
+
+            #     - Only include items that are in the above list. If an item is not in the list, do NOT include it in the response.
+            #     - Only include items that the speaker has clearly confirmed they want to order.
+            #     - If an item is canceled, changed, or rejected during the conversation, do NOT include it.
+            #     - The conversation may be in Uzbek, Russian, Tajik, or English. Accurately understand the language and context.
+            #     - If the conversation is not about placing an order, return an empty list: []
+            #     - Here the meaning of sizes in tajik: Small - Xutarak, Medium - Sredniy, Large - Kalun.
+
+            #     Return the result as a JSON list **with no explanation**, only in this exact format:
+            #     [
+            #     {{"id": 1, "quantity": 1}},
+            #     {{"id": 2, "quantity": 2}}
+            #     ]
+
+            #     If no valid items are ordered, return: []
+
+            #     """,
+            #     types.Part.from_bytes(
+            #         data=contents,
+            #         mime_type=mime_type
+            #     )
+            # ],
+            contents=[prompt, types.Part.from_bytes(
                     data=contents,
                     mime_type=mime_type
-                )
-            ],
+                )],
+
             config={
                 "response_mime_type": "application/json",
                 "response_schema": list[Item],
-            },
+            }
         )
 
         # print(response.text)
@@ -260,7 +287,7 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
         for order in orders_data_for_bot:
             for product in products_data:
                 if product["id"] == order["item_id"]:
-                    order["name"] = product["name"]
+                    order["label_for_ai"] = product["label_for_ai"]
 
         background_tasks.add_task(send_to_telegram, contents, filename, orders_data_for_bot)
         return JSONResponse(
