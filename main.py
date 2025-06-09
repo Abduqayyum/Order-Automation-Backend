@@ -189,7 +189,7 @@ async def transcribe_audio(audio: UploadFile = File(None), current_user: auth_mo
         
     
 @app.post("/summarize_order_from_audio/")
-async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFile = File(None), current_user: auth_models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFile = File(None), extra_prompt: str = Form(default=None), current_user: auth_models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
         if audio is None:
             return JSONResponse(status_code=400, content={"success": {}, "error": {"description": {"Please upload a file!"}}})
@@ -213,13 +213,7 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
         filename = f"{datetime.utcnow().isoformat()}_{audio.filename}"
         
         mime_type = kind.mime
-
-        prompt = prompt = f"""
-            You are an expert assistant that extracts confirmed product orders from conversation audio.
-
-            Here is a list of valid products you must match against:
-            {products_data}
-
+        instruction = """
             Your task:
             - Analyze the conversation and return only the final confirmed orders.
             - Include ONLY products present in the list above.
@@ -228,6 +222,18 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
             - The conversation may be in Uzbek, Russian, Tajik, or English. Match appropriately.
             - Tajik translations: Small - Xutarak, Medium - Sredniy, Large - Kalun.
             - If no valid items are confirmed, return: []
+            """
+
+        if extra_prompt is not None:
+            instruction = instruction + "\t" + extra_prompt
+
+        prompt = f"""
+            You are an expert assistant that extracts confirmed product orders from conversation audio.
+
+            Here is a list of valid products you must match against:
+            {products_data}
+
+            {instruction}
 
             Return a JSON list with no extra explanation, in this exact format:
             [
@@ -235,39 +241,11 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
                 {{"id": 2, "quantity": 2}}
             ]
             """
+        print(instruction)
 
         response = client.models.generate_content(
             model="gemini-2.0-flash",
             # model = "gemini-2.5-flash-preview-05-20",
-            # contents = [
-            #     f"""
-            #     Here is the list of valid items you can use in the response: {products_data}
-
-            #     Your task is to analyze the conversation audio and extract only the final confirmed orders based on this list.
-
-            #     Strictly follow these rules:
-
-            #     - Only include items that are in the above list. If an item is not in the list, do NOT include it in the response.
-            #     - Only include items that the speaker has clearly confirmed they want to order.
-            #     - If an item is canceled, changed, or rejected during the conversation, do NOT include it.
-            #     - The conversation may be in Uzbek, Russian, Tajik, or English. Accurately understand the language and context.
-            #     - If the conversation is not about placing an order, return an empty list: []
-            #     - Here the meaning of sizes in tajik: Small - Xutarak, Medium - Sredniy, Large - Kalun.
-
-            #     Return the result as a JSON list **with no explanation**, only in this exact format:
-            #     [
-            #     {{"id": 1, "quantity": 1}},
-            #     {{"id": 2, "quantity": 2}}
-            #     ]
-
-            #     If no valid items are ordered, return: []
-
-            #     """,
-            #     types.Part.from_bytes(
-            #         data=contents,
-            #         mime_type=mime_type
-            #     )
-            # ],
             contents=[prompt, types.Part.from_bytes(
                     data=contents,
                     mime_type=mime_type
