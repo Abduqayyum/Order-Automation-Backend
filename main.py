@@ -24,7 +24,7 @@ from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 
 import crud, models, schemas
 import auth_crud, auth_models, auth_schemas
-import prompt_crud
+import prompt_crud, category_crud
 from auth_utils import (create_access_token, get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES,
                        create_refresh_token, is_valid_refresh_token, get_user_from_refresh_token,
                        revoke_refresh_token, revoke_all_user_tokens)
@@ -104,6 +104,8 @@ load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", None)
 
 client = genai.Client(api_key=GOOGLE_API_KEY)
+
+pending_transcriptions = {}
 
 class PromptRequest(BaseModel):
     text: str
@@ -187,8 +189,8 @@ async def transcribe_audio(audio: UploadFile = File(None), current_user: auth_mo
     
     except Exception as e:
         return JSONResponse(status_code=400, content={"success": {}, "error": {"description": str(e)}})
-        
-    
+
+
 @app.post("/summarize_order_from_audio/")
 async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFile = File(None), current_user: auth_models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
@@ -287,39 +289,184 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
                 "error": str(e)
             }
         )
+        
+    
+@app.post("/summarize_order_from_audio_new/")
+async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFile = File(None), current_user: auth_models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    try:
+        if audio is None:
+            return JSONResponse(status_code=400, content={"success": {}, "error": {"description": {"Please upload a file!"}}})
+        
+        contents = await audio.read()
+        kind = filetype.guess(contents)
+        print("file name", audio.filename)
+
+        if kind is None or kind.mime not in allowed_file_types:
+            return JSONResponse(status_code=400, content={"success": {}, "error": {"description": f"Invalid file type. Only following audio files are accepted {allowed_file_types}."}})
+        
+        if current_user.organization_id:
+            products = auth_crud.get_products_by_organization(db, current_user.organization_id)
+            products_data = [{"id": product.id, "label_for_ai": product.label_for_ai} for product in products]
+        else:
+            products_data = list()
+
+        filename = f"{datetime.utcnow().isoformat()}_{audio.filename}"
+        
+        mime_type = kind.mime
+        
+        transcription_prompt = f"""
+            Transcribe the audio content accurately. Preserve all details about products, quantities, and any changes or cancellations.
+            Return only the transcription, no explanations or formatting.
+        """
+        
+        transcription_response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[
+                transcription_prompt, 
+                types.Part.from_bytes(data=contents, mime_type=mime_type)
+            ]
+        )
+        transcription_text = transcription_response.text
+        
+        if current_user.organization_id:
+            org_id = current_user.organization_id
+            
+            if org_id in pending_transcriptions:
+                pending_transcriptions[org_id]["text"] += " " + transcription_text
+
+                pending_transcriptions[org_id]["last_updated"] = datetime.utcnow()
+                print(pending_transcriptions[org_id]["text"])
+                # print(f"Appended new transcription for organization {org_id}")
+            else:
+                pending_transcriptions[org_id] = {
+                    "text": transcription_text,
+                    "last_updated": datetime.utcnow()
+                }
+                # print(f"Created new transcription for organization {org_id}")
+            
+            current_transcription = pending_transcriptions[org_id]["text"]
+        else:
+            current_transcription = transcription_text
+        
+        instruction = """
+                Your task:
+                - Analyze the entire conversation properly and return only the final confirmed orders.
+                - Include ONLY products present in the list above.
+                - Exclude any item not in the list, even if it's mentioned.
+                - Do NOT include items that were canceled, changed, or rejected.
+                - Update products data if they are changed during conversation.
+                - The conversation may be in Uzbek, Russian, Tajik, or English. Match appropriately.
+                - Tajik translations: Small - Xutarak, Medium - Sredniy, Large - Kalun.
+                - Only include the final confirmed quantity of each product.
+                - If a product is ordered multiple times but updated later, use only the last confirmed quantity.
+                - Do not repeat the same product in the list.
+                - If a product is canceled or replaced with another, exclude it.
+                - If the same product is mentioned with different sizes or variants, include only the final confirmed variant and quantity.
+                - Return only confirmed items, and do not assume anything not clearly confirmed.
+                - If no valid or confirmed products are mentioned, return: []
+                    """
+
+
+        if current_user.organization_id:
+            org_prompt = prompt_crud.get_prompt_by_organization(db, current_user.organization_id)
+            if org_prompt:
+                instruction = instruction + "\t" + org_prompt.prompt_text
+                
+        prompt = f"""
+            You are an expert assistant that extracts confirmed product orders from conversation text.
+
+            Here is a list of valid products you must match against:
+            {products_data}
+
+            Here is the conversation transcript:
+            {current_transcription}
+
+            {instruction}
+
+            Return a JSON list with no extra explanation, in this exact format:
+            [
+                {{"id": 1, "quantity": 1}},
+                {{"id": 2, "quantity": 2}}
+            ]
+            """
+        # print(instruction)
+
+        # print(current_transcription, "-------\n")
+
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[prompt],
+            config={
+                "response_mime_type": "application/json",
+                "response_schema": list[Item],
+            }
+        )
+
+        print(response.text, "------ model response")
+
+        orders: list[Item] = response.parsed
+        orders_data = [{"item_id": dict(item)["id"], "quantity": dict(item)["quantity"]} for item in orders]
+        orders_data_for_bot = [{"item_id": dict(item)["id"], "quantity": dict(item)["quantity"]} for item in orders]
+        for order in orders_data_for_bot:
+            for product in products_data:
+                if product["id"] == order["item_id"]:
+                    order["label_for_ai"] = product["label_for_ai"]
+
+        background_tasks.add_task(send_to_telegram, contents, filename, orders_data_for_bot)
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": orders_data,
+                "error": {} 
+            }
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": {},
+                "error": str(e)
+            }
+        )
 
     
 @app.post("/orders/", response_model=schemas.Order)
 async def create_order(order: schemas.OrderCreate, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+    if not current_user.organization_id:
+        raise HTTPException(status_code=403, detail="User must belong to an organization to create orders")
+    
+    if current_user.organization_id in pending_transcriptions:
+        del pending_transcriptions[current_user.organization_id]
+        print(f"Cleared pending transcriptions for organization {current_user.organization_id}")
+    
     db_order = models.Order(total_price=0.0, organization_id=current_user.organization_id)
     db.add(db_order)
     db.commit()
     db.refresh(db_order)
     
     total_price = 0.0
-    for item_data in order.items:
-        product = auth_crud.get_product(db, item_data.item_id)
+    for item in order.items:
+        product = auth_crud.get_product(db, item.item_id)
         if not product:
-            raise HTTPException(status_code=404, detail=f"Product with ID {item_data.item_id} not found")
-            
-        if not current_user.is_admin and product.organization_id != current_user.organization_id:
-            raise HTTPException(status_code=403, detail=f"Access denied for product with ID {item_data.item_id}")
+            db.delete(db_order)
+            db.commit()
+            raise HTTPException(status_code=400, detail=f"Product with ID {item.item_id} not found")
         
-        item_price = product.price
+        if product.organization_id != current_user.organization_id:
+            db.delete(db_order)
+            db.commit()
+            raise HTTPException(status_code=403, detail=f"Product with ID {item.item_id} does not belong to your organization")
         
         db_item = models.OrderItem(
             order_id=db_order.id,
-            item_id=item_data.item_id,
-            quantity=item_data.quantity,
-            price=item_price
+            item_id=item.item_id,
+            quantity=item.quantity,
+            price=product.price
         )
         db.add(db_item)
-        
-        item_total = item_price * item_data.quantity
-        total_price += item_total
+        total_price += product.price * item.quantity
     
     db_order.total_price = total_price
-    
     db.commit()
     db.refresh(db_order)
     return db_order
@@ -399,7 +546,6 @@ async def delete_order(order_id: int, db: Session = Depends(get_db), current_use
     return True
 
 
-# Organization Prompt Endpoints
 @app.post("/organization-prompts/", response_model=schemas.OrganizationPrompt)
 async def create_organization_prompt(prompt: schemas.OrganizationPromptCreate, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
     if not current_user.is_admin:
@@ -445,6 +591,89 @@ async def delete_organization_prompt(organization_id: int, db: Session = Depends
         raise HTTPException(status_code=403, detail="Access denied")
     
     return prompt_crud.delete_organization_prompt(db=db, organization_id=organization_id)
+
+
+@app.post("/categories/", response_model=schemas.Category)
+async def create_category(category: schemas.CategoryCreate, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+    try:
+        if not current_user.is_admin:
+            if current_user.organization_id is None:
+                raise HTTPException(status_code=403, detail="You must belong to an organization to create categories")
+            category.organization_id = current_user.organization_id
+        else:
+            organization = auth_crud.get_organization(db, category.organization_id)
+            if not organization:
+                raise HTTPException(status_code=400, detail=f"Organization with ID {category.organization_id} does not exist")
+        
+        return category_crud.create_category(db=db, category=category)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error creating category: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"An error occurred while creating the category: {str(e)}")
+
+@app.get("/categories/", response_model=List[schemas.Category])
+async def read_categories(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+    if current_user.organization_id:
+        return category_crud.get_categories_by_organization(db, organization_id=current_user.organization_id, skip=skip, limit=limit)
+    if current_user.is_admin:
+        return category_crud.get_all_categories(db, skip=skip, limit=limit)
+    return []
+
+@app.get("/categories/{category_id}", response_model=schemas.Category)
+async def read_category(category_id: int, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+    db_category = category_crud.get_category(db, category_id=category_id)
+    if db_category is None:
+        raise HTTPException(status_code=404, detail="Category not found")
+    if not current_user.is_admin and current_user.organization_id != db_category.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    return db_category
+
+@app.put("/categories/{category_id}", response_model=schemas.Category)
+async def update_category(category_id: int, category: schemas.CategoryCreate, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+    try:
+        db_category = category_crud.get_category(db, category_id=category_id)
+        if db_category is None:
+            raise HTTPException(status_code=404, detail="Category not found")
+            
+        if not current_user.is_admin and current_user.organization_id != db_category.organization_id:
+            raise HTTPException(status_code=403, detail="You can only update categories from your organization")
+            
+        if not current_user.is_admin:
+            if current_user.organization_id is None:
+                raise HTTPException(status_code=403, detail="You must belong to an organization to update categories")
+            category.organization_id = current_user.organization_id
+        else:
+            organization = auth_crud.get_organization(db, category.organization_id)
+            if not organization:
+                raise HTTPException(status_code=400, detail=f"Organization with ID {category.organization_id} does not exist")
+            
+        return category_crud.update_category(db=db, category_id=category_id, category_data=category)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error updating category: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"An error occurred while updating the category: {str(e)}")
+
+@app.delete("/categories/{category_id}")
+async def delete_category(category_id: int, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+    try:
+        db_category = category_crud.get_category(db, category_id=category_id)
+        if db_category is None:
+            raise HTTPException(status_code=404, detail="Category not found")
+            
+        if not current_user.is_admin and current_user.organization_id != db_category.organization_id:
+            raise HTTPException(status_code=403, detail="You can only delete categories from your organization")
+        
+        if not current_user.is_admin and current_user.organization_id is None:
+            raise HTTPException(status_code=403, detail="You must belong to an organization to delete categories")
+            
+        return category_crud.delete_category(db=db, category_id=category_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error deleting category: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"An error occurred while deleting the category: {str(e)}")
 
 @app.post("/register/", response_model=auth_schemas.User)
 async def register_user(user: auth_schemas.UserCreate, db: Session = Depends(get_db)):

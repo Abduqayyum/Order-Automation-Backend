@@ -118,12 +118,22 @@ def create_product(db: Session, product: ProductCreate):
     organization = get_organization(db, product.organization_id)
     if not organization:
         raise HTTPException(status_code=400, detail=f"Organization with ID {product.organization_id} does not exist")
+    
+    if product.category_id is not None:
+        from category_crud import get_category
+        category = get_category(db, product.category_id)
+        if not category:
+            raise HTTPException(status_code=400, detail=f"Category with ID {product.category_id} does not exist")
+        if category.organization_id != product.organization_id:
+            raise HTTPException(status_code=400, detail=f"Category with ID {product.category_id} does not belong to the specified organization")
         
     db_product = Product(
         name=product.name,
         organization_id=product.organization_id,
         price=product.price,
-        label_for_ai=product.label_for_ai
+        label_for_ai=product.label_for_ai,
+        size=product.size,
+        category_id=product.category_id
     )
     db.add(db_product)
     db.commit()
@@ -140,10 +150,20 @@ def update_product(db: Session, product_id: int, product_data: ProductCreate):
     if not organization:
         raise HTTPException(status_code=400, detail=f"Organization with ID {product_data.organization_id} does not exist")
     
+    if product_data.category_id is not None:
+        from category_crud import get_category
+        category = get_category(db, product_data.category_id)
+        if not category:
+            raise HTTPException(status_code=400, detail=f"Category with ID {product_data.category_id} does not exist")
+        if category.organization_id != product_data.organization_id:
+            raise HTTPException(status_code=400, detail=f"Category with ID {product_data.category_id} does not belong to the specified organization")
+    
     db_product.name = product_data.name
     db_product.organization_id = product_data.organization_id
     db_product.price = product_data.price
     db_product.label_for_ai = product_data.label_for_ai
+    db_product.size = product_data.size
+    db_product.category_id = product_data.category_id
     
     db.commit()
     db.refresh(db_product)
