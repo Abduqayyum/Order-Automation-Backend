@@ -24,7 +24,7 @@ from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 
 import crud, models, schemas
 import auth_crud, auth_models, auth_schemas
-import prompt_crud
+import prompt_crud, category_crud
 from auth_utils import (create_access_token, get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES,
                        create_refresh_token, is_valid_refresh_token, get_user_from_refresh_token,
                        revoke_refresh_token, revoke_all_user_tokens)
@@ -399,7 +399,6 @@ async def delete_order(order_id: int, db: Session = Depends(get_db), current_use
     return True
 
 
-# Organization Prompt Endpoints
 @app.post("/organization-prompts/", response_model=schemas.OrganizationPrompt)
 async def create_organization_prompt(prompt: schemas.OrganizationPromptCreate, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
     if not current_user.is_admin:
@@ -445,6 +444,89 @@ async def delete_organization_prompt(organization_id: int, db: Session = Depends
         raise HTTPException(status_code=403, detail="Access denied")
     
     return prompt_crud.delete_organization_prompt(db=db, organization_id=organization_id)
+
+
+@app.post("/categories/", response_model=schemas.Category)
+async def create_category(category: schemas.CategoryCreate, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+    try:
+        if not current_user.is_admin:
+            if current_user.organization_id is None:
+                raise HTTPException(status_code=403, detail="You must belong to an organization to create categories")
+            category.organization_id = current_user.organization_id
+        else:
+            organization = auth_crud.get_organization(db, category.organization_id)
+            if not organization:
+                raise HTTPException(status_code=400, detail=f"Organization with ID {category.organization_id} does not exist")
+        
+        return category_crud.create_category(db=db, category=category)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error creating category: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"An error occurred while creating the category: {str(e)}")
+
+@app.get("/categories/", response_model=List[schemas.Category])
+async def read_categories(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+    if current_user.organization_id:
+        return category_crud.get_categories_by_organization(db, organization_id=current_user.organization_id, skip=skip, limit=limit)
+    if current_user.is_admin:
+        return category_crud.get_all_categories(db, skip=skip, limit=limit)
+    return []
+
+@app.get("/categories/{category_id}", response_model=schemas.Category)
+async def read_category(category_id: int, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+    db_category = category_crud.get_category(db, category_id=category_id)
+    if db_category is None:
+        raise HTTPException(status_code=404, detail="Category not found")
+    if not current_user.is_admin and current_user.organization_id != db_category.organization_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    return db_category
+
+@app.put("/categories/{category_id}", response_model=schemas.Category)
+async def update_category(category_id: int, category: schemas.CategoryCreate, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+    try:
+        db_category = category_crud.get_category(db, category_id=category_id)
+        if db_category is None:
+            raise HTTPException(status_code=404, detail="Category not found")
+            
+        if not current_user.is_admin and current_user.organization_id != db_category.organization_id:
+            raise HTTPException(status_code=403, detail="You can only update categories from your organization")
+            
+        if not current_user.is_admin:
+            if current_user.organization_id is None:
+                raise HTTPException(status_code=403, detail="You must belong to an organization to update categories")
+            category.organization_id = current_user.organization_id
+        else:
+            organization = auth_crud.get_organization(db, category.organization_id)
+            if not organization:
+                raise HTTPException(status_code=400, detail=f"Organization with ID {category.organization_id} does not exist")
+            
+        return category_crud.update_category(db=db, category_id=category_id, category_data=category)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error updating category: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"An error occurred while updating the category: {str(e)}")
+
+@app.delete("/categories/{category_id}")
+async def delete_category(category_id: int, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+    try:
+        db_category = category_crud.get_category(db, category_id=category_id)
+        if db_category is None:
+            raise HTTPException(status_code=404, detail="Category not found")
+            
+        if not current_user.is_admin and current_user.organization_id != db_category.organization_id:
+            raise HTTPException(status_code=403, detail="You can only delete categories from your organization")
+        
+        if not current_user.is_admin and current_user.organization_id is None:
+            raise HTTPException(status_code=403, detail="You must belong to an organization to delete categories")
+            
+        return category_crud.delete_category(db=db, category_id=category_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error deleting category: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"An error occurred while deleting the category: {str(e)}")
 
 @app.post("/register/", response_model=auth_schemas.User)
 async def register_user(user: auth_schemas.UserCreate, db: Session = Depends(get_db)):

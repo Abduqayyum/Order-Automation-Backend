@@ -52,11 +52,31 @@ class Organization(OrganizationBase):
         orm_mode = True
 
 
+class CategoryBase(BaseModel):
+    name: str
+    organization_id: int
+    description: Optional[str] = None
+
+
+class CategoryCreate(CategoryBase):
+    pass
+
+
+class Category(CategoryBase):
+    id: int
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
 class ProductBase(BaseModel):
     name: str
     organization_id: int
     price: float
     label_for_ai: str
+    size: Optional[str] = None
+    category_id: Optional[int] = None
 
 
 class ProductCreate(ProductBase):
