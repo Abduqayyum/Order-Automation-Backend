@@ -15,6 +15,7 @@ class Organization(Base):
     products = relationship("Product", back_populates="organization")
     orders = relationship("Order", back_populates="organization")
     prompts = relationship("OrganizationPrompt", back_populates="organization")
+    categories = relationship("Category", back_populates="organization")
     
     def to_dict(self):
         return {
@@ -24,17 +25,41 @@ class Organization(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None
         }
 
+class Category(Base):
+    __tablename__ = "categories"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    description = Column(String, nullable=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"))
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    
+    organization = relationship("Organization", back_populates="categories")
+    products = relationship("Product", back_populates="category")
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "organization_id": self.organization_id,
+            "created_at": self.created_at.isoformat() if self.created_at else None
+        }
+
 class Product(Base):
     __tablename__ = "products"
     
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
     organization_id = Column(Integer, ForeignKey("organizations.id"))
+    category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
     label_for_ai = Column(String)
     price = Column(Float)
+    size = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     
     organization = relationship("Organization", back_populates="products")
+    category = relationship("Category", back_populates="products")
     
     def to_dict(self):
         return {
@@ -42,7 +67,9 @@ class Product(Base):
             "name": self.name,
             "productName": self.name.replace('_', ' ').title(),
             "label_for_ai": self.label_for_ai,
-            "price": self.price
+            "price": self.price,
+            "size": self.size,
+            "category_id": self.category_id
         }
 
 
