@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Boolean
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Boolean, Text
 from sqlalchemy.orm import relationship
 from database import Base
 import datetime
@@ -14,6 +14,7 @@ class Organization(Base):
     users = relationship("User", back_populates="organization")
     products = relationship("Product", back_populates="organization")
     orders = relationship("Order", back_populates="organization")
+    prompts = relationship("OrganizationPrompt", back_populates="organization")
     
     def to_dict(self):
         return {
@@ -81,4 +82,24 @@ class OrderItem(Base):
             "item_id": self.item_id,
             "quantity": self.quantity,
             "price": self.price
+        }
+
+class OrganizationPrompt(Base):
+    __tablename__ = "organization_prompts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), unique=True)
+    prompt_text = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    
+    organization = relationship("Organization", back_populates="prompts")
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "organization_id": self.organization_id,
+            "prompt_text": self.prompt_text,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None
         }

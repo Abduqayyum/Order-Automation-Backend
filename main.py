@@ -24,6 +24,7 @@ from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 
 import crud, models, schemas
 import auth_crud, auth_models, auth_schemas
+import prompt_crud
 from auth_utils import (create_access_token, get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES,
                        create_refresh_token, is_valid_refresh_token, get_user_from_refresh_token,
                        revoke_refresh_token, revoke_all_user_tokens)
@@ -189,7 +190,7 @@ async def transcribe_audio(audio: UploadFile = File(None), current_user: auth_mo
         
     
 @app.post("/summarize_order_from_audio/")
-async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFile = File(None), extra_prompt: str = Form(default=None), current_user: auth_models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFile = File(None), current_user: auth_models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
         if audio is None:
             return JSONResponse(status_code=400, content={"success": {}, "error": {"description": {"Please upload a file!"}}})
@@ -224,14 +225,17 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
             - If no valid items are confirmed, return: []
             """
 
-        if extra_prompt is not None:
-            instruction = instruction + "\t" + extra_prompt
-
+        if current_user.organization_id:
+            org_prompt = prompt_crud.get_prompt_by_organization(db, current_user.organization_id)
+            if org_prompt:
+                instruction = instruction + "\t" + org_prompt.prompt_text
+                
         prompt = f"""
             You are an expert assistant that extracts confirmed product orders from conversation audio.
 
             Here is a list of valid products you must match against:
             {products_data}
+
 
             {instruction}
 
@@ -393,6 +397,54 @@ async def delete_order(order_id: int, db: Session = Depends(get_db), current_use
     db.commit()
     
     return True
+
+
+# Organization Prompt Endpoints
+@app.post("/organization-prompts/", response_model=schemas.OrganizationPrompt)
+async def create_organization_prompt(prompt: schemas.OrganizationPromptCreate, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+    if not current_user.is_admin:
+        if current_user.organization_id is None:
+            raise HTTPException(status_code=403, detail="You must belong to an organization to create prompts")
+        if current_user.organization_id != prompt.organization_id:
+            raise HTTPException(status_code=403, detail="You can only create prompts for your organization")
+    
+    return prompt_crud.create_organization_prompt(db=db, prompt=prompt)
+
+@app.get("/organization-prompts/", response_model=List[schemas.OrganizationPrompt])
+async def read_organization_prompts(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+    if current_user.is_admin:
+        return prompt_crud.get_all_prompts(db, skip=skip, limit=limit)
+    
+    if current_user.organization_id:
+        prompt = prompt_crud.get_prompt_by_organization(db, current_user.organization_id)
+        return [prompt] if prompt else []
+    
+    return []
+
+@app.get("/organization-prompts/{organization_id}", response_model=schemas.OrganizationPrompt)
+async def read_organization_prompt(organization_id: int, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+    if not current_user.is_admin and current_user.organization_id != organization_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    prompt = prompt_crud.get_prompt_by_organization(db, organization_id)
+    if prompt is None:
+        raise HTTPException(status_code=404, detail="Prompt not found for this organization")
+    
+    return prompt
+
+@app.put("/organization-prompts/{organization_id}", response_model=schemas.OrganizationPrompt)
+async def update_organization_prompt(organization_id: int, prompt: schemas.OrganizationPromptUpdate, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+    if not current_user.is_admin and current_user.organization_id != organization_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    return prompt_crud.update_organization_prompt(db=db, organization_id=organization_id, prompt_data=prompt)
+
+@app.delete("/organization-prompts/{organization_id}")
+async def delete_organization_prompt(organization_id: int, db: Session = Depends(get_db), current_user: auth_models.User = Depends(get_current_user)):
+    if not current_user.is_admin and current_user.organization_id != organization_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    return prompt_crud.delete_organization_prompt(db=db, organization_id=organization_id)
 
 @app.post("/register/", response_model=auth_schemas.User)
 async def register_user(user: auth_schemas.UserCreate, db: Session = Depends(get_db)):

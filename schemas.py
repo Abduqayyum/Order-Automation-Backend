@@ -52,7 +52,6 @@ class Organization(OrganizationBase):
         orm_mode = True
 
 
-
 class ProductBase(BaseModel):
     name: str
     organization_id: int
@@ -67,6 +66,28 @@ class ProductCreate(ProductBase):
 class Product(ProductBase):
     id: int
     created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class OrganizationPromptBase(BaseModel):
+    organization_id: int
+    prompt_text: str
+
+
+class OrganizationPromptCreate(OrganizationPromptBase):
+    pass
+
+
+class OrganizationPromptUpdate(BaseModel):
+    prompt_text: str
+
+
+class OrganizationPrompt(OrganizationPromptBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
 
     class Config:
         orm_mode = True
