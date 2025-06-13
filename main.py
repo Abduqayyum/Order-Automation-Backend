@@ -207,7 +207,7 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
         if current_user.organization_id:
             products = auth_crud.get_products_by_organization(db, current_user.organization_id)
             # products_data = {product.label_for_ai: product.id for product in products}
-            products_data = [{"id": product.id, "label_for_ai": product.label_for_ai} for product in products]
+            products_data = [{"id": product.id, "label_for_ai": product.label_for_ai, "name": product.name} for product in products]
             # products_data = [{"id": product.id, "name": product.name} for product in products]
             print(products_data)
         else:
@@ -272,6 +272,7 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
             for product in products_data:
                 if product["id"] == order["item_id"]:
                     order["label_for_ai"] = product["label_for_ai"]
+                    order["name"] = product["name"]
 
         background_tasks.add_task(send_to_telegram, contents, filename, orders_data_for_bot)
         return JSONResponse(
@@ -306,7 +307,7 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
         
         if current_user.organization_id:
             products = auth_crud.get_products_by_organization(db, current_user.organization_id)
-            products_data = [{"id": product.id, "label_for_ai": product.label_for_ai} for product in products]
+            products_data = [{"id": product.id, "label_for_ai": product.label_for_ai, "name": product.name} for product in products]
         else:
             products_data = list()
 
@@ -348,24 +349,36 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
         else:
             current_transcription = transcription_text
         
+        # instruction = """
+        #         Your task:
+        #         - Analyze the entire conversation properly and return only the final confirmed orders.
+        #         - Include ONLY products present in the list above.
+        #         - Exclude any item not in the list, even if it's mentioned.
+        #         - Do NOT include items that were canceled, changed, or rejected.
+        #         - Update products data if they are changed during conversation.
+        #         - The conversation may be in Uzbek, Russian, Tajik, or English. Match appropriately.
+        #         - Tajik translations: Small - Xutarak, Medium - Sredniy, Large - Kalun.
+        #         - Only include the final confirmed quantity of each product.
+        #         - If a product is ordered multiple times but updated later, use only the last confirmed quantity.
+        #         - Do not repeat the same product in the list.
+        #         - If a product is canceled or replaced with another, exclude it.
+        #         - If the same product is mentioned with different sizes or variants, include only the final confirmed variant and quantity.
+        #         - Return only confirmed items, and do not assume anything not clearly confirmed.
+        #         - If no valid or confirmed products are mentioned, return: []
+        #             """
+
         instruction = """
                 Your task:
-                - Analyze the entire conversation properly and return only the final confirmed orders.
-                - Include ONLY products present in the list above.
-                - Exclude any item not in the list, even if it's mentioned.
-                - Do NOT include items that were canceled, changed, or rejected.
-                - Update products data if they are changed during conversation.
-                - The conversation may be in Uzbek, Russian, Tajik, or English. Match appropriately.
+                - Analyze the entire conversation transcript to determine the final, confirmed list of products and their quantities.
+                - Maintain a running list of orders. If a product is mentioned multiple times, always use the quantity and variant from its *latest confirmed mention*.
+                - Update product quantities or variants if they are changed or clarified in later parts of the conversation. For example, if a user orders 1 cappuccino and then later says "no, I want 2 cappuccinos", update the quantity to 2.
+                - Include ONLY products present in the provided list. Exclude any item not in the list, even if it's mentioned.
+                - **CRITICAL**: If a product is explicitly and clearly canceled by the user (e.g., "I don't need cappuccino anymore", "remove the latte", "cancel the cappuccino"), **it MUST be entirely excluded from the final JSON output**. Do NOT include canceled products, even with a quantity of zero or by reducing their quantity. They should simply not appear in the final list.
+                - The conversation may be in Uzbek, Russian, Tajik, or English. Match product names and sizes appropriately.
                 - Tajik translations: Small - Xutarak, Medium - Sredniy, Large - Kalun.
-                - Only include the final confirmed quantity of each product.
-                - If a product is ordered multiple times but updated later, use only the last confirmed quantity.
-                - Do not repeat the same product in the list.
-                - If a product is canceled or replaced with another, exclude it.
-                - If the same product is mentioned with different sizes or variants, include only the final confirmed variant and quantity.
-                - Return only confirmed items, and do not assume anything not clearly confirmed.
-                - If no valid or confirmed products are mentioned, return: []
+                - Return only confirmed items. Do not assume anything not clearly confirmed.
+                - If no valid or confirmed products are mentioned throughout the *entire* conversation, or if all previously ordered items are canceled, return: []
                     """
-
 
         if current_user.organization_id:
             org_prompt = prompt_crud.get_prompt_by_organization(db, current_user.organization_id)
@@ -406,13 +419,14 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
 
         orders: list[Item] = response.parsed
         orders_data = [{"item_id": dict(item)["id"], "quantity": dict(item)["quantity"]} for item in orders]
-        orders_data_for_bot = [{"item_id": dict(item)["id"], "quantity": dict(item)["quantity"]} for item in orders]
-        for order in orders_data_for_bot:
+        # orders_data_for_bot = [{"item_id": dict(item)["id"], "quantity": dict(item)["quantity"]} for item in orders]
+        for order in orders_data:
             for product in products_data:
                 if product["id"] == order["item_id"]:
                     order["label_for_ai"] = product["label_for_ai"]
+                    order["name"] = product["name"]
 
-        background_tasks.add_task(send_to_telegram, contents, filename, orders_data_for_bot)
+        background_tasks.add_task(send_to_telegram, contents, filename, orders_data)
         return JSONResponse(
             status_code=200,
             content={
