@@ -317,8 +317,7 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
         mime_type = kind.mime
         
         transcription_prompt = f"""
-            Transcribe the audio content accurately. Preserve all details about products, quantities, and any changes or cancellations.
-            Return only the transcription, no explanations or formatting.
+            Transcribe the audio content accurately. Return only the transcription, no explanations or formatting. The conversation may be in Uzbek, Russian, Tajik, or English.
         """
         
         transcription_response = client.models.generate_content(
