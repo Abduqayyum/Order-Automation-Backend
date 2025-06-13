@@ -350,23 +350,16 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
             current_transcription = transcription_text
         
         instruction = """
-        Your task:
-        - Analyze the entire conversation properly and return only the final confirmed orders.
-        - Include ONLY products present in the list above.
-        - Exclude any item not in the list, even if it's mentioned.
-        - Do NOT include items that were canceled, changed, or rejected.
-        - Update products data if they are changed during conversation.
-        - The conversation may be in Uzbek, Russian, Tajik, or English. Match appropriately.
-        - Tajik translations: Small - Xutarak, Medium - Sredniy, Large - Kalun.
-        - Only include the final confirmed quantity of each product.
-        - If a product is ordered multiple times but updated later, use only the last confirmed quantity.
-        - Do not repeat the same product in the list.
-        - If a product is canceled or replaced with another, exclude it.
-        - If the same product is mentioned with different sizes or variants, include only the final confirmed variant and quantity.
-        - **ABSOLUTELY DO NOT add any products that are not clearly and explicitly confirmed by the user in the conversation.**
-        - **Do not guess, do not infer — only include products that are clearly confirmed.**
-        - Return only confirmed items, and do not assume anything not clearly confirmed.
-        - If no valid or confirmed products are mentioned, return: []
+                Your task:
+                - Analyze the entire conversation transcript to determine the final, confirmed list of products and their quantities.
+                - Maintain a running list of orders. If a product is mentioned multiple times, always use the quantity and variant from its *latest confirmed mention*.
+                - Update product quantities or variants if they are changed or clarified in later parts of the conversation. For example, if a user orders 1 cappuccino and then later says "no, I want 2 cappuccinos", update the quantity to 2.
+                - Include ONLY products present in the provided list. Exclude any item not in the list, even if it's mentioned.
+                - **CRITICAL**: If a product is explicitly and clearly canceled by the user (e.g., "I don't need cappuccino anymore", "remove the latte", "cancel the burger"), **it MUST be entirely excluded from the final JSON output**. Do NOT include canceled products, even with a quantity of zero or by reducing their quantity. They should simply not appear in the final list.
+                - The conversation may be in Uzbek, Russian, Tajik, or English. Match product names and sizes appropriately.
+                - Tajik translations: Small - Xutarak, Medium - Sredniy, Large - Kalun.
+                - Return only confirmed items. Do not assume anything not clearly confirmed.
+                - If no valid or confirmed products are mentioned throughout the *entire* conversation, or if all previously ordered items are canceled, return: []
         """
 
         if current_user.organization_id:
