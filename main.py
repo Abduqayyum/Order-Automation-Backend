@@ -218,7 +218,7 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
         
         mime_type = kind.mime
         instruction = """
-            Your task:
+            Rules:
             - Analyze the conversation and return only the final confirmed orders.
             - Include ONLY products present in the list above.
             - Exclude any item not in the list, even if it's mentioned.
@@ -369,16 +369,18 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
         #             """
 
         instruction = """
-                Your task:
-                - Analyze the entire conversation transcript to determine the final, confirmed list of products and their quantities.
-                - Maintain a running list of orders. If a product is mentioned multiple times, always use the quantity and variant from its *latest confirmed mention*.
-                - Update product quantities or variants if they are changed or clarified in later parts of the conversation. For example, if a user orders 1 cappuccino and then later says "no, I want 2 cappuccinos", update the quantity to 2.
-                - Include ONLY products present in the provided list. Exclude any item not in the list, even if it's mentioned.
-                - **CRITICAL**: If a product is explicitly and clearly canceled by the user (e.g., "I don't need cappuccino anymore", "remove the latte", "cancel the cappuccino"), **it MUST be entirely excluded from the final JSON output**. Do NOT include canceled products, even with a quantity of zero or by reducing their quantity. They should simply not appear in the final list.
-                - The conversation may be in Uzbek, Russian, Tajik, or English. Match product names and sizes appropriately.
-                - Tajik translations: Small - Xutarak, Medium - Sredniy, Large - Kalun.
-                - Return only confirmed items. Do not assume anything not clearly confirmed.
-                - If no valid or confirmed products are mentioned throughout the *entire* conversation, or if all previously ordered items are canceled, return: []
+                Rules:
+
+                1. ONLY extract products listed in the provided product list.
+                2. Extract only the FINAL confirmed quantity for each product.
+                3. If a product is ordered multiple times, only the last confirmed quantity counts.
+                4. If a product was canceled, replaced, or rejected — do not include it.
+                5. If the quantity or size is changed later in the conversation, use the latest version.
+                6. Do NOT include any assumptions — only extract what's clearly confirmed.
+                7. Remove duplicates — no product should appear more than once in the result.
+                8. The conversation may contain multiple languages (Uzbek, Russian, Tajik, English).
+                9. Tajik translations: Small - Xutarak, Medium - Sredniy, Large - Kalun.
+                10. If a product is mentioned in earlier part but is not mentioned again later, and there was no cancellation/change, then consider it confirmed.
                     """
 
         if current_user.organization_id:
@@ -399,8 +401,8 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
 
             Return a JSON list with no extra explanation, in this exact format:
             [
-                {{"id": 1, "quantity": 1}},
-                {{"id": 2, "quantity": 2}}
+                {{"id": <product_id>, "quantity": <number>}},
+                ...
             ]
             """
         # print(instruction)
