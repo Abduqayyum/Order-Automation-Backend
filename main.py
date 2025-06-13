@@ -37,7 +37,8 @@ from pydantic import BaseModel
 def send_to_telegram(contents: bytes, filename: str, orders_data: list):
     import requests
 
-    message = f"🧾 New Order Extracted:\n\n{json.dumps(orders_data, indent=2)}"
+    # message = f"🧾 New Order Extracted:\n\n{json.dumps(orders_data, indent=2)}"
+    message = f"🧾 New Order Extracted:\n\n{json.dumps(orders_data, indent=2, ensure_ascii=False)}" 
 
     try:
         requests.post(
@@ -48,7 +49,7 @@ def send_to_telegram(contents: bytes, filename: str, orders_data: list):
 
         requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": message}
+            json={"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
         )
 
     except Exception as e:
