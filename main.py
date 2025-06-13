@@ -350,38 +350,25 @@ async def process_audio_file(background_tasks: BackgroundTasks, audio: UploadFil
         else:
             current_transcription = transcription_text
         
-        # instruction = """
-        #         Your task:
-        #         - Analyze the entire conversation properly and return only the final confirmed orders.
-        #         - Include ONLY products present in the list above.
-        #         - Exclude any item not in the list, even if it's mentioned.
-        #         - Do NOT include items that were canceled, changed, or rejected.
-        #         - Update products data if they are changed during conversation.
-        #         - The conversation may be in Uzbek, Russian, Tajik, or English. Match appropriately.
-        #         - Tajik translations: Small - Xutarak, Medium - Sredniy, Large - Kalun.
-        #         - Only include the final confirmed quantity of each product.
-        #         - If a product is ordered multiple times but updated later, use only the last confirmed quantity.
-        #         - Do not repeat the same product in the list.
-        #         - If a product is canceled or replaced with another, exclude it.
-        #         - If the same product is mentioned with different sizes or variants, include only the final confirmed variant and quantity.
-        #         - Return only confirmed items, and do not assume anything not clearly confirmed.
-        #         - If no valid or confirmed products are mentioned, return: []
-        #             """
-
         instruction = """
-                Rules:
-
-                1. ONLY extract products listed in the provided product list.
-                2. Extract only the FINAL confirmed quantity for each product.
-                3. If a product is ordered multiple times, only the last confirmed quantity counts.
-                4. If a product was canceled, replaced, or rejected — do not include it.
-                5. If the quantity or size is changed later in the conversation, use the latest version.
-                6. Do NOT include any assumptions — only extract what's clearly confirmed.
-                7. Remove duplicates — no product should appear more than once in the result.
-                8. The conversation may contain multiple languages (Uzbek, Russian, Tajik, English).
-                9. Tajik translations: Small - Xutarak, Medium - Sredniy, Large - Kalun.
-                10. If a product is mentioned in earlier part but is not mentioned again later, and there was no cancellation/change, then consider it confirmed.
-                    """
+        Your task:
+        - Analyze the entire conversation properly and return only the final confirmed orders.
+        - Include ONLY products present in the list above.
+        - Exclude any item not in the list, even if it's mentioned.
+        - Do NOT include items that were canceled, changed, or rejected.
+        - Update products data if they are changed during conversation.
+        - The conversation may be in Uzbek, Russian, Tajik, or English. Match appropriately.
+        - Tajik translations: Small - Xutarak, Medium - Sredniy, Large - Kalun.
+        - Only include the final confirmed quantity of each product.
+        - If a product is ordered multiple times but updated later, use only the last confirmed quantity.
+        - Do not repeat the same product in the list.
+        - If a product is canceled or replaced with another, exclude it.
+        - If the same product is mentioned with different sizes or variants, include only the final confirmed variant and quantity.
+        - **ABSOLUTELY DO NOT add any products that are not clearly and explicitly confirmed by the user in the conversation.**
+        - **Do not guess, do not infer — only include products that are clearly confirmed.**
+        - Return only confirmed items, and do not assume anything not clearly confirmed.
+        - If no valid or confirmed products are mentioned, return: []
+        """
 
         if current_user.organization_id:
             org_prompt = prompt_crud.get_prompt_by_organization(db, current_user.organization_id)
